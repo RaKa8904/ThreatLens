@@ -11,6 +11,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /zeek
 
 COPY local.zeek /zeek/local.zeek
+RUN mkdir -p /usr/local/zeek/share/zeek/site && \
+    cp /zeek/local.zeek /usr/local/zeek/share/zeek/site/local.zeek
+
 COPY entrypoint.sh /zeek/entrypoint.sh
 RUN chmod +x /zeek/entrypoint.sh
 

@@ -4,30 +4,50 @@
 # fingerprint extraction, and restricts logging to telemetry streams.
 
 @load policy/tuning/json-logs.zeek
-@load policy/protocols/conn
-@load policy/protocols/dns
-@load policy/protocols/ssl
 
-# Enable JA3 client and server fingerprint extraction
+# Configure ISO8601 timestamps for JSON log writer
+redef LogAscii::json_timestamps = JSON::TS_ISO8601;
+
+# Base protocols (conn, dns, ssl) are loaded automatically by Zeek.
+# Conditionally load JA3 fingerprinting if available in the image
+@ifdef ( JA3::enable_ja3 )
 @load policy/protocols/ssl/ja3
+@endif
 
-redef JSON::timestamps = JSON::TS_ISO8601;
+# Conditionally load JA4 fingerprinting if available in the image
+@ifdef ( JA4::enable_ja4 )
+@load ja4
+@endif
 
 event zeek_init()
     {
     # Silence non-essential logging streams to maximize pipeline throughput and minimize I/O
-    local quiet_streams: set[Log::ID] = {
-        PacketFilter::LOG,
-        LoadedScripts::LOG,
-        Reporter::LOG,
-        Weird::LOG,
-        Notice::LOG,
-        Files::LOG,
-        Software::LOG
-    };
+    @ifdef ( PacketFilter::LOG )
+    Log::disable_stream(PacketFilter::LOG);
+    @endif
 
-    for ( stream in quiet_streams )
-        {
-        Log::disable_stream(stream);
-        }
+    @ifdef ( LoadedScripts::LOG )
+    Log::disable_stream(LoadedScripts::LOG);
+    @endif
+
+    @ifdef ( Reporter::LOG )
+    Log::disable_stream(Reporter::LOG);
+    @endif
+
+    @ifdef ( Weird::LOG )
+    Log::disable_stream(Weird::LOG);
+    @endif
+
+    @ifdef ( Notice::LOG )
+    Log::disable_stream(Notice::LOG);
+    @endif
+
+    @ifdef ( Files::LOG )
+    Log::disable_stream(Files::LOG);
+    @endif
+
+    @ifdef ( Software::LOG )
+    Log::disable_stream(Software::LOG);
+    @endif
     }
+
