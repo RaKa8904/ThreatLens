@@ -91,6 +91,24 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+  # ============================================================================
+  # Zeek - High-speed passive network analysis & JSON metadata generator
+  # ============================================================================
+  zeek:
+    build:
+      context: ./ingest/zeek
+      dockerfile: Dockerfile
+    container_name: threatlens-zeek
+    environment:
+      MODE: watch
+      LOG_DIR: /logs
+      PCAP_DIR: /pcaps
+    volumes:
+      - ./pcaps:/pcaps:ro
+      - ./logs:/logs
+    depends_on:
+      redpanda:
+        condition: service_healthy
     networks:
       - threatlens-net
 
