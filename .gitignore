@@ -64,6 +64,7 @@ spool/
 *.rdb
 clickhouse_data/
 redis_data/
+data/
 
 # IDE & OS metadata
 .vscode/
