@@ -268,22 +268,54 @@ class ZeekLogShipper:
                     results.append(record)
         return results
 
-    async def tail_file_async(
+    def flush(self, timeout: float = 5.0) -> None:
+        """Flushes buffered messages on the Kafka producer."""
+        if self.is_kafka_connected and self.kafka_producer is not None:
+            try:
+                self.kafka_producer.flush(timeout=timeout)
+            except Exception as exc:
+                logger.error("Failed to flush Kafka producer: %s", exc)
+
+    async def tail_all_async(
         self,
-        log_type: str,
-        file_path: str,
         stop_event: Optional[asyncio.Event] = None,
         poll_interval: float = 0.2,
     ):
-        """Asynchronously tails an active Zeek log file."""
-        while not os.path.exists(file_path) and (not stop_event or not stop_event.is_set()):
-            await asyncio.sleep(poll_interval)
+        """Asynchronously tails conn.log, dns.log, and ssl.log simultaneously."""
+        conn_path = os.path.join(self.log_dir, "conn.log")
+        dns_path = os.path.join(self.log_dir, "dns.log")
+        ssl_path = os.path.join(self.log_dir, "ssl.log")
 
-        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
-            f.seek(0, os.SEEK_END)  # Start at end of file
-            while not stop_event or not stop_event.is_set():
-                line = f.readline()
-                if line:
-                    self.process_log_line(log_type, line)
-                else:
-                    await asyncio.sleep(poll_interval)
+        tasks = [
+            asyncio.create_task(self.tail_file_async("conn", conn_path, stop_event, poll_interval)),
+            asyncio.create_task(self.tail_file_async("dns", dns_path, stop_event, poll_interval)),
+            asyncio.create_task(self.tail_file_async("ssl", ssl_path, stop_event, poll_interval)),
+        ]
+        await asyncio.gather(*tasks)
+
+
+if __name__ == "__main__":
+    import argparse
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    parser = argparse.ArgumentParser(description="ThreatLens Zeek Log Shipper to Redpanda/Kafka")
+    parser.add_argument("--log-dir", default=os.getenv("ZEEK_LOG_DIR", "./logs"), help="Path to directory containing Zeek logs")
+    parser.add_argument("--kafka-servers", default=os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"), help="Kafka bootstrap broker(s)")
+    parser.add_argument("--mode", choices=["tail", "batch"], default="tail", help="Ingest mode: tail live logs or run batch processing")
+    args = parser.parse_args()
+
+    shipper = ZeekLogShipper(log_dir=args.log_dir, kafka_bootstrap_servers=args.kafka_servers)
+    logger.info("Starting ZeekLogShipper in %s mode (log_dir=%s, kafka=%s)", args.mode, args.log_dir, args.kafka_servers)
+
+    if args.mode == "batch":
+        for log_name in ["conn", "dns", "ssl"]:
+            file_p = os.path.join(args.log_dir, f"{log_name}.log")
+            if os.path.exists(file_p):
+                recs = shipper.process_log_file(log_name, file_p)
+                logger.info("Processed %d %s.log records from %s", len(recs), log_name, file_p)
+        shipper.flush()
+    else:
+        try:
+            asyncio.run(shipper.tail_all_async())
+        except KeyboardInterrupt:
+            logger.info("ZeekLogShipper stopped by user.")
