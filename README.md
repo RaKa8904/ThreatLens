@@ -124,12 +124,12 @@ All detection modules, queue topics, database records, and frontend feeds confor
 
 | Threat Class | Detection Methodology | Mathematical Basis | Window Tier | Operational Trigger |
 | :--- | :--- | :--- | :--- | :--- |
-| **Volumetric & Protocol DDoS** | Statistical 3-Sigma Surge & Low Target Entropy | $$Z = \frac{\text{PPS}_t - \mu_{\text{PPS}}}{\sigma_{\text{PPS}}} > 3.0$$ | 10 Seconds | $\text{PPS} > 1,000$, $\text{SYN Ratio} > 0.85$, and target space entropy $H < 1.0$. |
-| **Botnet C2 Beaconing** | Harmonic FFT Analysis & Inter-Arrival Variance | $$\text{Var}(\Delta t) = \frac{1}{N}\sum_{i=1}^N (\Delta t_i - \mu_{\Delta t})^2$$ | 300 Seconds | Persistent periodic connections ($\ge 4$ events) with $\text{Var}(\Delta t) < 0.05\,\text{s}^2$. |
-| **DGA & DNS Tunneling** | Shannon Entropy & Payload Length Thresholding | $$H(X) = -\sum_{i=1}^n P(x_i) \log_2 P(x_i)$$ | 60 Seconds | Domain query $H(X) \ge 3.80$ bits or TXT query record length $> 60$ octets. |
-| **Encrypted Malware** | Threat Intelligence Hash Matching & Isolation Forest | $$\text{Score}_{\text{IF}}(\mathbf{x}) = 2^{-\frac{E(h(\mathbf{x}))}{c(n)}}$$ | 300 Seconds | Known malicious JA3 fingerprint match or outlier score $> 0.70$ on SPLT features. |
-| **Reconnaissance Scan** | Endpoint Cardinality Dispersion & SYN Asymmetry | $$C_{\text{fan}} = \|\mathcal{D}_{\text{dst}}\| = \|\{d_1, d_2, \dots, d_k\}\|$$ | 10s / 60s | Single source IP contacting $\ge 15$ unique ports or destination IPs with $\le 2$ packets per target. |
-| **Data Exfiltration** | Asymmetric Outbound Flow Ratio & Duration Modeling | $$R_{\text{flow}} = \frac{B_{\text{out}}}{\max(B_{\text{in}}, 1)}$$ | 300 Seconds | Non-server host transmitting $B_{\text{out}} > 5\,\text{MB}$ with $R_{\text{flow}} \ge 50.0$. |
+| **Volumetric & Protocol DDoS** | Statistical 3-Sigma Surge & Low Target Entropy | $Z = \frac{\text{PPS} - \mu}{\sigma} > 3.0$ | 10 Seconds | $\text{PPS} > 1,000$, $\text{SYN Ratio} > 0.85$, and target space entropy $H < 1.0$. |
+| **Botnet C2 Beaconing** | Harmonic FFT Analysis & Inter-Arrival Variance | $\text{Var}(\Delta t) = \frac{1}{N} \sum (\Delta t - \mu)^2$ | 300 Seconds | Persistent periodic connections ($\ge 4$ events) with $\text{Var}(\Delta t) < 0.05\text{ s}^2$. |
+| **DGA & DNS Tunneling** | Shannon Entropy & Payload Length Thresholding | $H(X) = -\sum P(x) \log_2 P(x)$ | 60 Seconds | Domain query $H(X) \ge 3.80\text{ bits}$ or TXT query record length $> 60\text{ octets}$. |
+| **Encrypted Malware** | Threat Intelligence Hash Matching & Isolation Forest | $\text{Score}(\mathbf{x}) = 2^{-\frac{E(h(\mathbf{x}))}{c(n)}}$ | 300 Seconds | Known malicious JA3 fingerprint match or outlier score $> 0.70$ on SPLT features. |
+| **Reconnaissance Scan** | Endpoint Cardinality Dispersion & SYN Asymmetry | $C = \vert \mathcal{D} \vert = \text{Card}(\text{Targets})$ | 10s / 60s | Single source IP contacting $\ge 15$ unique ports or destination IPs with $\le 2$ packets per target. |
+| **Data Exfiltration** | Asymmetric Outbound Flow Ratio & Duration Modeling | $R = \frac{\text{Bytes(Egress)}}{\max(\text{Bytes(Ingress)}, 1)}$ | 300 Seconds | Non-server host transmitting $B > 5\text{ MB}$ with flow ratio $R \ge 50.0$. |
 
 ---
 
