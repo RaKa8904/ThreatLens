@@ -10,9 +10,8 @@
 [![ClickHouse](https://img.shields.io/badge/ClickHouse-OLAP-FFCC01.svg?logo=clickhouse&logoColor=black)](https://clickhouse.com/)
 [![Redpanda / Kafka](https://img.shields.io/badge/Redpanda-Kafka_API-FA2546.svg?logo=redpanda&logoColor=white)](https://redpanda.com/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED.svg?logo=docker&logoColor=white)](https://www.docker.com/)
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-22C55E.svg)](LICENSE)
 
-ThreatLens is an enterprise-grade, read-only passive network threat detection and forensic intelligence platform. Designed for high-throughput packet metadata inspection, sliding-window anomaly detection, and dense Security Operations Center (SOC) visualization, ThreatLens enables line-rate visibility into hostile enterprise network flows without decrypting payloads or causing inline backpressure.
+ThreatLens is a read-only passive network threat detection and forensic intelligence prototype. Designed for packet-metadata inspection, sliding-window anomaly detection, and Security Operations Center (SOC) visualization, ThreatLens provides visibility into hostile network flows without decrypting payloads or causing inline backpressure.
 
 ---
 
@@ -23,13 +22,15 @@ ThreatLens implements a decoupled, event-driven streaming architecture across si
 ```mermaid
 flowchart TD
     subgraph IngestLayer ["1. Ingestion Layer"]
-        TAP["Passive Hardware TAP / SPAN Mirror"] --> Diode["Data-Diode Driver (TX Disabled)"]
-        MockProducer["Synthetic Flow Stream Generator"] -.-> Redpanda
+        TAP["Passive Hardware TAP / SPAN Mirror"]
+        Diode["Data-Diode Driver (TX Disabled, planned deployment hardening)"]
+        TAP --> Diode
+        MockProducer["Synthetic Flow Stream Generator (demo mode)"] -.-> Redpanda
     end
 
     subgraph ExtractionLayer ["2. Extraction Layer"]
         Diode --> Zeek["Zeek IDS Protocol Extractor"]
-        Zeek -->|"network-flows (JSON/Avro)"| Redpanda["Redpanda Streaming Broker (Port 9092)"]
+        Zeek -->|"network-flows (JSON)"| Redpanda["Redpanda Streaming Broker (Port 9092)"]
     end
 
     subgraph FeatureLayer ["3. Stateful Temporal Feature Store"]
@@ -39,13 +40,13 @@ flowchart TD
         StreamWorker <--> Redis300["Tier 3: 300s Window\n(C2 Heartbeats & Exfiltration)"]
     end
 
-    subgraph DetectionLayer ["4. Multi-Threat ML Detection Pipeline"]
-        Redis10 --> E1["Engine 1: Volumetric DDoS (Dynamic 3-Sigma)"]
+    subgraph DetectionLayer ["4. Multi-Threat Detection Pipeline"]
+        Redis10 --> E1["Engine 1: Volumetric DDoS (Static-Baseline 3-Sigma)"]
         Redis10 --> E5["Engine 5: Reconnaissance Scan (Fan-Out Cardinality)"]
         Redis60 --> E3["Engine 3: DGA & DNS Tunneling (Shannon Entropy)"]
         Redis60 --> E5
-        Redis300 --> E2["Engine 2: Botnet C2 Beaconing (FFT & IAT Variance)"]
-        Redis300 --> E4["Engine 4: Encrypted Malware (JA3/JA4 & SPLT)"]
+        Redis300 --> E2["Engine 2: Botnet C2 Beaconing (IAT Variance & Jitter-Ratio Periodicity)"]
+        Redis300 --> E4["Engine 4: Encrypted Malware (JA3 Threat-Intel Matching)"]
         Redis300 --> E6["Engine 6: Data Exfiltration (Byte Ratio Asymmetry)"]
     end
 
@@ -58,7 +59,7 @@ flowchart TD
     end
 
     subgraph PresentationLayer ["6. High-Density SOC Dashboard"]
-        WSHub -->|"Sub-50ms WebSocket Feed"| SOC["React 18 + shadcn/ui SOC Console (Port 5173)"]
+        WSHub -->|"Live WebSocket Feed"| SOC["React 18 + shadcn/ui SOC Console (Port 5173)"]
         ClickHouse -.->|"Historical REST Queries"| FastAPIRest["FastAPI REST API"]
         FastAPIRest -.-> SOC
     end
@@ -69,7 +70,7 @@ flowchart TD
 ## 2. Core Architectural Pillars
 
 ### A. Zero-Transmit Passive Ingestion
-To eliminate the risk of operational disruption, transmission leakage, or discovery by adversaries, the sensor platform enforces data-diode ingestion:
+To eliminate the risk of operational disruption, transmission leakage, or discovery by adversaries, the sensor platform targets data-diode ingestion. The kernel-level hardening below is deployment-time configuration on the sensor host (planned; not enforced by this repository's code):
 - Monitor interfaces run in unaddressed promiscuous mode with all Layer 2 and Layer 3 outbound transmissions disabled (`ip link set <dev> arp off; sysctl -w net.ipv6.conf.<dev>.disable_ipv6=1`).
 - ARP, ICMP, DHCP, and IPv6 router solicitations are blocked at the kernel and physical driver levels.
 - Non-intrusive protocol parsing: raw packet payloads are purged from memory immediately following header extraction and TLS handshake recording.
@@ -83,8 +84,9 @@ Adversaries intentionally bypass static signature firewalls by staging attacks a
 
 ### C. Non-Decrypted Cryptographic Profiling
 ThreatLens enforces zero packet payload decryption, preserving network privacy and cryptographic integrity:
-- **Cryptographic Fingerprinting**: Extracts client JA3 and JA4 hashes derived from TLS ClientHello parameters (ciphers, extensions, supported groups, and point formats).
-- **Sequence of Packet Lengths and Times (SPLT)**: Captures directional byte lengths and millisecond-precision packet intervals during connection negotiation to classify malicious tools without inspecting payload bytes.
+- **Cryptographic Fingerprinting (implemented)**: Extracts client JA3 hashes derived from TLS ClientHello parameters (ciphers, extensions, supported groups, and point formats) via Zeek's built-in JA3 policy.
+- **JA4 Fingerprinting (planned)**: Requires the `foxio/ja4` Zeek package; not yet loaded by the bundled `local.zeek`.
+- **Sequence of Packet Lengths and Times (SPLT, planned)**: Directional byte lengths and millisecond-precision packet intervals during connection negotiation to classify malicious tools without inspecting payload bytes.
 
 ---
 
@@ -104,7 +106,7 @@ All detection modules, stream topics, database tables, and WebSocket payloads ad
     "byte_ratio": 0.08,
     "fan_out_count": 1,
     "ja3_hash": "e7d705a3286e19ea42f587b344ee6865",
-    "details": "Periodic beaconing detected at 15.0s intervals via FFT harmonic analysis."
+    "details": "Periodic beaconing detected at 15.0s intervals via jitter-ratio periodicity analysis."
   }
 }
 ```
@@ -130,12 +132,12 @@ All detection modules, stream topics, database tables, and WebSocket payloads ad
 
 | Threat Class | Detection Methodology | Mathematical Formulation | Window Tier | Operational Trigger |
 | :--- | :--- | :--- | :--- | :--- |
-| **Volumetric & Protocol DDoS** | Statistical 3-Sigma Surge & SYN/UDP Ratio | $Z = \frac{\text{PPS} - \mu}{\sigma} > 3.0$ | 10 Seconds | $\text{PPS} > 1,000$, $\text{SYN Ratio} > 0.85$, or UDP storm exceeding 3.0 standard deviations. |
-| **Botnet C2 Beaconing** | Fast Fourier Transform (FFT) & Low IAT Variance | $\text{Var}(\Delta t) = \frac{1}{N} \sum (\Delta t - \mu)^2$ | 300 Seconds | Automated recurring connections ($\ge 4$ events) with interval variance $\text{Var}(\Delta t) < 0.05\text{ s}^2$. |
-| **DGA & DNS Tunneling** | Character Shannon Entropy & FQDN Length Analysis | $H(X) = -\sum P(x) \log_2 P(x)$ | 60 Seconds | Domain query $H(X) \ge 3.80\text{ bits}$, query length $> 60\text{ chars}$, or TXT tunneling. |
-| **Encrypted Malware** | Threat Intelligence JA3 Matching & SPLT Profiling | $\text{Score}(\mathbf{x}) = 2^{-\frac{E(h(\mathbf{x}))}{c(n)}}$ | 300 Seconds | Known malicious JA3 hash match (TrickBot, Cobalt Strike, Emotet) or SPLT burst outlier. |
-| **Reconnaissance Scan** | Endpoint Cardinality Dispersion & SYN Asymmetry | $C = \vert \mathcal{D} \vert = \text{Card}(\text{Targets})$ | 10s / 60s | Single source IP probing $\ge 15$ distinct ports or external IP addresses with $\le 2$ packets per target. |
-| **Data Exfiltration** | Outbound Flow Ratio & High-Volume Egress Z-Score | $R = \frac{\text{Bytes(Egress)}}{\max(\text{Bytes(Ingress)}, 1)}$ | 300 Seconds | Non-server host transmitting $> 5\text{ MB}$ outbound with flow asymmetry ratio $R \ge 50.0$. |
+| **Volumetric & Protocol DDoS** | Static-Baseline 3-Sigma Surge & SYN/UDP Ratio | $Z = \frac{\text{PPS} - \mu}{\sigma} > 3.0$ | 10 Seconds | $Z \ge 3.0$ with $\text{PPS} \ge 100$; SYN flood: SYN packet flow with $\ge 300$ packets, or $\text{SYN Ratio} \ge 0.85$ with $\text{PPS} \ge 100$; UDP storm: $\text{PPS} \ge 200$ with $Z \ge 3.0$. |
+| **Botnet C2 Beaconing** | IAT Variance & Jitter-Ratio Periodicity | $\text{Var}(\Delta t) = \frac{1}{N} \sum (\Delta t - \mu)^2$ | 300 Seconds | Recurring connections ($\ge 3$ heartbeats) with mean period $\ge 1.0\text{ s}$ and $\text{Var}(\Delta t) \le 0.05\text{ s}^2$ or periodicity concentration $\ge 0.85$. |
+| **DGA & DNS Tunneling** | Character Shannon Entropy & FQDN Length Analysis | $H(X) = -\sum P(x) \log_2 P(x)$ | 60 Seconds | Domain query $H(X) \ge 3.80\text{ bits}$, query length $> 60\text{ chars}$, or TXT/NULL query with payload $\ge 45\text{ chars}$ or $H(X) \ge 3.60\text{ bits}$. |
+| **Encrypted Malware** | Threat-Intelligence JA3 Exact Matching | $\text{JA3} \in \text{SignatureDB}$ | 300 Seconds | Exact match against curated JA3 database (TrickBot, Cobalt Strike, Emotet, Metasploit, AsyncRAT, QakBot). |
+| **Reconnaissance Scan** | Endpoint Cardinality Dispersion & SYN Asymmetry | $C = \vert \mathcal{D} \vert = \text{Card}(\text{Targets})$ | 10s / 60s | Single source IP probing $\ge 3$ distinct ports or IP addresses with probe profile ($\le 2$ packets, $\le 100\text{ bytes}$ per target). |
+| **Data Exfiltration** | Outbound Flow Ratio & Volume Thresholds | $R = \frac{\text{Bytes(Egress)}}{\max(\text{Bytes(Ingress)}, 1)}$ | 300 Seconds | $\ge 1\text{ MB}$ outbound with $R \ge 20.0$, or $\ge 5\text{ MB}$ outbound with $R \ge 10.0$. |
 
 ---
 
@@ -146,16 +148,22 @@ ThreatLens/
 ├── backend/
 │   ├── app/
 │   │   ├── __init__.py
-│   │   ├── main.py                 # FastAPI application, REST endpoints, WebSocket hub & background stream worker
-│   │   ├── schemas.py              # Pydantic v2 schemas: ThreatClassEnum, EvidenceSchema, ThreatAlertSchema
+│   │   ├── main.py                 # FastAPI application, REST endpoints, WebSocket hub, Kafka wiring & synthetic demo producer
+│   │   ├── schemas.py              # Pydantic v2 schemas: FlowEventSchema, ThreatClassEnum, EvidenceSchema, ThreatAlertSchema
 │   │   ├── storage.py              # ClickHouseAlertStore: table initialization, batch insert & memory ring buffer
-│   │   └── websocket_manager.py    # ConnectionManager: live client connection tracking & sub-50ms alert broadcast
-│   ├── requirements.txt            # Backend dependencies (FastAPI, Redis, ClickHouse, Pydantic, Scikit-learn, httpx)
+│   │   └── websocket_manager.py    # ConnectionManager: live client connection tracking & alert broadcast
+│   ├── requirements.txt            # Backend dependencies (FastAPI, Redis, ClickHouse, Pydantic, Kafka, Scikit-learn, httpx)
 │   └── tests/
 │       ├── __init__.py
 │       ├── test_api.py             # FastAPI REST & WebSocket endpoint integration tests (TestClient)
+│       ├── test_alert_consumer.py  # KafkaAlertConsumer: valid/malformed alert processing, persistence, broadcast
 │       ├── test_engines.py         # Multi-model detection engines and pipeline integration tests
-│       └── test_features.py        # Statistical metrics, Shannon entropy, and SlidingWindowStore tests
+│       ├── test_features.py        # Statistical metrics, Shannon entropy, and SlidingWindowStore tests
+│       ├── test_flow_event_schema.py # FlowEventSchema contract: producer conformance, invalid rejection, WS config
+│       ├── test_ingest_contracts.py  # Canonical topics, no stale split topics, Kafka dependency, no pipeline bypass
+│       ├── test_no_label_leak.py   # Meta-test: no detector reads simulated_label
+│       ├── test_pcap_replay.py     # Zeek log normalization, shipper publication, PCAP replay detection, alert persistence
+│       └── test_stream_worker.py   # Message parsing, canonical dispatch, worker delegation, alert publishing
 ├── engine/
 │   ├── __init__.py
 │   ├── features/
@@ -166,13 +174,15 @@ ThreatLens/
 │   │   ├── __init__.py
 │   │   ├── aggregator.py           # AlertAggregator: concurrent multi-model dispatch & confidence score normalizer
 │   │   ├── base.py                 # BaseDetectionEngine interface & DetectionCandidate dataclass
-│   │   ├── beaconing_engine.py     # Botnet C2 beaconing engine (FFT harmonic periodicity & low IAT variance)
-│   │   ├── ddos_engine.py          # Volumetric DDoS engine (Dynamic 3-sigma PPS & SYN flood evaluation)
+│   │   ├── beaconing_engine.py     # Botnet C2 beaconing engine (IAT variance & jitter-ratio periodicity)
+│   │   ├── ddos_engine.py          # Volumetric DDoS engine (static-baseline 3-sigma PPS & SYN flood evaluation)
 │   │   ├── dns_engine.py           # DGA & DNS tunneling engine (Character Shannon entropy & payload size thresholds)
-│   │   ├── exfiltration_engine.py  # Data exfiltration engine (Outbound-to-inbound byte asymmetry Z-scores)
-│   │   ├── malware_engine.py       # Encrypted malware engine (JA3 cryptographic fingerprint matching & SPLT heuristics)
+│   │   ├── exfiltration_engine.py  # Data exfiltration engine (Outbound-to-inbound byte asymmetry & volume thresholds)
+│   │   ├── malware_engine.py       # Encrypted malware engine (JA3 threat-intelligence signature matching)
 │   │   └── recon_engine.py         # Reconnaissance scan engine (Multi-tier endpoint cardinality dispersion)
-│   └── pipeline.py                 # DetectionPipeline orchestrator & process_flow_event callable entrypoint
+│   ├── kafka_consumer.py           # KafkaAlertConsumer: threat-alerts topic → persistence + WebSocket broadcast
+│   ├── pipeline.py                 # DetectionPipeline orchestrator & canonical event→store dispatch
+│   └── stream_worker.py            # StreamWorker: network-flows topic → pipeline → threat-alerts topic
 ├── frontend/
 │   ├── index.html                  # HTML5 template with dark theme and Inter/JetBrains Mono fonts
 │   ├── package.json                # React 18, Vite, Tailwind CSS, Recharts, Hugeicons, and class utilities
@@ -201,10 +211,11 @@ ThreatLens/
 │   ├── __init__.py
 │   ├── producers/
 │   │   ├── __init__.py
-│   │   └── mock_producer.py        # Synthetic multi-class network flow stream generator and Kafka publisher
-│   └── zeek/                       # Passive packet capture configurations & Zeek scripts (Milestone 6)
+│   │   ├── mock_producer.py        # Synthetic multi-class network flow stream generator and Kafka publisher
+│   │   └── zeek_kafka_shipper.py   # Zeek JSON log tailer/normalizer publishing to network-flows
+│   └── zeek/                       # Zeek sensor container (Dockerfile, local.zeek policy, PCAP replay scripts)
 ├── docker-compose.yml              # Multi-service hybrid pipeline (Redpanda, Redpanda Console, Redis, ClickHouse)
-├── .env.example                    # Service ports, hostnames, and detection parameters
+├── .env.example                    # Service ports, hostnames, topics, ingest source, and detection parameters
 └── .gitignore                      # Environment secrets, logs, PCAPs, and build artifact exclusions
 ```
 
@@ -257,9 +268,12 @@ source .venv/bin/activate
 # Install backend dependencies
 pip install -r backend/requirements.txt
 
-# Launch FastAPI server (with real-time WebSocket hub & background telemetry generator)
+# Launch FastAPI server (Kafka required: starts StreamWorker, alert consumer,
+# and — with INGEST_SOURCE=synthetic — the demo event producer)
 uvicorn backend.app.main:app --reload --port 8000
 ```
+
+> **Note**: The backend requires a running Kafka/Redpanda broker (Step 2). If Kafka is unreachable, the API still serves REST/WebSocket endpoints, but live detection is disabled and the failure is logged as an ERROR and surfaced under `services.kafka` in `/api/health`. Set `ENABLE_BACKGROUND_GENERATOR=false` to run the API without background workers.
 
 FastAPI endpoints:
 - **Interactive OpenAPI Documentation**: [http://localhost:8000/docs](http://localhost:8000/docs)
@@ -282,53 +296,12 @@ Open the dashboard in your browser: [http://localhost:5173](http://localhost:517
 ---
 
 ### Step 5: Execute Complete Test Suite
-Run all 35 statistical, detection engine, pipeline, and API integration tests:
+Run all 110 contract, statistical, detection engine, pipeline, ingest, and API integration tests:
 ```bash
-python -m unittest discover -s backend/tests -v
+python -m unittest discover -s backend/tests -t . -v
 ```
 
-Expected output:
-```text
-test_get_alerts_unfiltered (test_api.TestFastAPIGateway) ... ok
-test_get_alerts_with_threat_class_filter (test_api.TestFastAPIGateway) ... ok
-test_health_endpoint (test_api.TestFastAPIGateway) ... ok
-test_metrics_throughput_endpoint (test_api.TestFastAPIGateway) ... ok
-test_websocket_threat_stream (test_api.TestFastAPIGateway) ... ok
-test_async_process_flow_event (test_engines.TestPipelineAndAggregator) ... ok
-test_benign_traffic_no_false_positives (test_engines.TestPipelineAndAggregator) ... ok
-test_pipeline_all_threat_classes_produce_valid_schemas (test_engines.TestPipelineAndAggregator) ... ok
-test_pydantic_schema_strict_conformance (test_engines.TestPipelineAndAggregator) ... ok
-test_beaconing_engine_detection (test_engines.TestThreatDetectionEngines) ... ok
-test_ddos_engine_detection (test_engines.TestThreatDetectionEngines) ... ok
-test_dns_engine_detection (test_engines.TestThreatDetectionEngines) ... ok
-test_exfiltration_engine_detection (test_engines.TestThreatDetectionEngines) ... ok
-test_malware_engine_detection (test_engines.TestThreatDetectionEngines) ... ok
-test_recon_engine_detection (test_engines.TestThreatDetectionEngines) ... ok
-test_10s_volumetric_and_fanout_metrics (test_features.TestSlidingWindowStore) ... ok
-test_300s_c2_and_exfiltration_metrics (test_features.TestSlidingWindowStore) ... ok
-test_60s_dns_and_recon_metrics (test_features.TestSlidingWindowStore) ... ok
-test_window_retention_and_expiration (test_features.TestSlidingWindowStore) ... ok
-test_fan_out_cardinality (test_features.TestStatisticalMetrics) ... ok
-test_flow_ratio_negative_guard (test_features.TestStatisticalMetrics) ... ok
-test_flow_ratio_normal_and_asymmetric (test_features.TestStatisticalMetrics) ... ok
-test_inter_arrival_variance_edge_cases (test_features.TestStatisticalMetrics) ... ok
-test_inter_arrival_variance_periodic_vs_random (test_features.TestStatisticalMetrics) ... ok
-test_shannon_entropy_diverse_strings (test_features.TestStatisticalMetrics) ... ok
-test_shannon_entropy_empty_and_single (test_features.TestStatisticalMetrics) ... ok
-test_shannon_entropy_ip_distribution (test_features.TestStatisticalMetrics) ... ok
-test_benign_flow_structure (test_features.TestSyntheticFlowGenerator) ... ok
-test_botnet_c2_beacon_characteristics (test_features.TestSyntheticFlowGenerator) ... ok
-test_data_exfiltration_characteristics (test_features.TestSyntheticFlowGenerator) ... ok
-test_dga_dns_tunnel_characteristics (test_features.TestSyntheticFlowGenerator) ... ok
-test_encrypted_malware_characteristics (test_features.TestSyntheticFlowGenerator) ... ok
-test_mock_event_producer_batch_generation (test_features.TestSyntheticFlowGenerator) ... ok
-test_recon_scan_characteristics (test_features.TestSyntheticFlowGenerator) ... ok
-test_volumetric_ddos_characteristics (test_features.TestSyntheticFlowGenerator) ... ok
-----------------------------------------------------------------------
-Ran 35 tests in 0.089s
-
-OK
-```
+The suite is hermetic: Kafka and other background workers are disabled during tests, and no external services are required.
 
 ---
 
@@ -338,13 +311,33 @@ OK
 | :---: | :--- | :--- | :---: |
 | **01** | Core Contracts & Docker Stack | Pydantic v2 schemas, synchronized TypeScript types, and multi-service `docker-compose.yml`. | Complete |
 | **02** | Feature Store & Synthetic Stream | SlidingWindowStore (10s, 60s, 300s), Shannon entropy, IAT variance, and synthetic generator. | Complete |
-| **03** | Multi-Threat ML Detection Pipeline | 6 specialized detection engines, FFT periodicity, dynamic 3-sigma scoring, and AlertAggregator. | Complete |
-| **04** | Streaming Gateway & Persistence | ClickHouse columnar storage client, FastAPI REST API, and sub-50ms WebSocket broadcast hub. | Complete |
+| **03** | Multi-Threat Detection Pipeline | 6 specialized detection engines (heuristic/statistical) and AlertAggregator. | Complete |
+| **04** | Streaming Gateway & Persistence | ClickHouse columnar storage client, FastAPI REST API, and WebSocket broadcast hub. | Complete |
 | **05** | High-Density SOC Dashboard | React 18 dashboard with shadcn/ui, Hugeicons, Recharts, slide-over ForensicDrawer, and freeze toggle. | Complete |
-| **06** | Hardware TAP & Live PCAP Replay | Containerized Zeek sensor scripts, optical TAP interface bindings, and live PCAP replay ingestion. | Next |
+| **06** | Hardware TAP & Live PCAP Replay | Containerized Zeek sensor scripts, Zeek→Kafka shipper, and PCAP replay ingestion. Optical TAP interface bindings and live sensor deployment pending. | Partial |
+
+---
+
+## 8. Implemented vs Planned
+
+### Implemented
+- Unified Kafka ingest: Zeek shipper and synthetic demo producer both publish JSON `FlowEvent` records to `network-flows`; a single StreamWorker feeds the canonical DetectionPipeline; alerts are published to `threat-alerts` and consumed by the backend for ClickHouse persistence and WebSocket broadcast.
+- FlowEventSchema contract (Pydantic v2) enforced at pipeline entry; malformed messages counted and skipped.
+- Six statistical/heuristic detection engines over Redis-backed sliding windows (10s/60s/300s) with in-memory fallback.
+- JA3 fingerprint extraction via Zeek's stock JA3 policy and exact-match threat-intel detection.
+- Zeek sensor container with PCAP replay (`zeek -r`) and JSON log shipping; synthetic PCAP generator for offline testing.
+- ClickHouse alert archive with in-memory ring-buffer fallback; REST API (`/api/health`, `/api/alerts`, `/api/metrics/throughput`) and `/ws/threats` WebSocket feed.
+- 110-test hermetic suite (contracts, engines, features, ingest, replay, API).
+
+### Planned
+- Kernel-level zero-transmit hardening (data diode, ARP/ICMP/DHCP/IPv6 suppression) on the sensor host at deployment time.
+- JA4 fingerprinting (requires the `foxio/ja4` Zeek package).
+- SPLT (sequence of packet lengths and times) feature extraction.
+- Calibrated baselines for the DDoS engine (currently a configurable static baseline) and z-score-based exfiltration scoring.
+- Real-dataset evaluation (e.g., CTU-13) and measured detection-latency benchmarks.
 
 ---
 
 ## License
 
-This project is licensed under the Apache License 2.0. See the [LICENSE](LICENSE) file for details.
+TBD — license decision pending.

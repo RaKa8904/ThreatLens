@@ -1,6 +1,6 @@
 # ThreatLens Passive Zeek Ingestion Policy
 # ========================================
-# Configures structured JSON streaming output, JA3/JA4 TLS cryptographic
+# Configures structured JSON streaming output, JA3/JA3S TLS cryptographic
 # fingerprint extraction, and restricts logging to telemetry streams.
 
 @load policy/tuning/json-logs.zeek

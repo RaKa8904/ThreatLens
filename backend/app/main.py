@@ -8,6 +8,7 @@ and background pipeline execution.
 import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+import json
 import logging
 import os
 import time
@@ -20,9 +21,10 @@ from backend.app.schemas import ThreatAlertSchema, ThreatClassEnum
 from backend.app.storage import ClickHouseAlertStore
 from backend.app.websocket_manager import ConnectionManager
 from engine.features.store import SlidingWindowStore
-from engine.kafka_consumer import KafkaIngestConsumer
+from engine.kafka_consumer import KafkaAlertConsumer
 from engine.models.aggregator import AlertAggregator
 from engine.pipeline import DetectionPipeline
+from engine.stream_worker import StreamWorker
 from ingest.producers.mock_producer import SyntheticFlowGenerator
 
 logger = logging.getLogger(__name__)
@@ -35,6 +37,13 @@ window_store = SlidingWindowStore(use_redis=True)
 alert_aggregator = AlertAggregator()
 pipeline = DetectionPipeline(store=window_store, aggregator=alert_aggregator)
 flow_generator = SyntheticFlowGenerator(seed=int(time.time()))
+
+# Live Kafka wiring state (populated during lifespan startup)
+kafka_state: Dict[str, Any] = {
+    "connected": False,
+    "ingest_source": os.getenv("INGEST_SOURCE", "synthetic").lower(),
+    "error": None,
+}
 
 # Live throughput counters
 throughput_state = {
@@ -52,69 +61,99 @@ def record_flow_telemetry(payload: Dict[str, Any]):
     throughput_state["total_bytes"] += int(payload.get("bytes_out") or 0) + int(payload.get("bytes_in") or 0)
 
 
-async def background_stream_worker(interval_seconds: float = 1.5):
+async def background_event_producer(
+    producer,
+    topic: str,
+    stop_event: asyncio.Event,
+    interval_seconds: float = 1.2,
+):
     """
-    Continuous background task generating synthetic enterprise telemetry,
-    feeding the detection pipeline, indexing to ClickHouse, and broadcasting alerts.
+    Synthetic demo mode: generates flow events and publishes them to the
+    canonical Kafka 'network-flows' topic, feeding the same downstream
+    StreamWorker -> DetectionPipeline path as real Zeek telemetry.
     """
-    logger.info("ThreatLens background telemetry streaming worker started.")
+    logger.info("Synthetic event producer started (topic=%s).", topic)
     try:
-        while True:
-            # Generate simulated flow (alternating benign traffic and anomaly attacks)
+        while not stop_event.is_set():
             event = flow_generator.generate_event(anomaly_ratio=0.45)
-
-            # Update metrics counters
             record_flow_telemetry(event)
-
-            # Run detection pipeline
-            alerts = pipeline.process_flow_event(event)
-
-            # Ingest to ClickHouse and broadcast live to WebSocket clients
-            for alert in alerts:
-                alert_store.insert_alert(alert)
-                await ws_manager.broadcast(alert)
-
+            await asyncio.to_thread(
+                producer.send, topic, value=json.dumps(event).encode("utf-8")
+            )
             await asyncio.sleep(interval_seconds)
     except asyncio.CancelledError:
-        logger.info("ThreatLens background telemetry streaming worker stopped.")
-    except Exception as exc:
-        logger.error("Error in telemetry streaming worker: %s", exc)
+        logger.info("Synthetic event producer stopped.")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for application startup and shutdown lifecycle."""
     ingest_source = os.getenv("INGEST_SOURCE", "synthetic").lower()
+    enable_bg = os.getenv("ENABLE_BACKGROUND_GENERATOR", "true").lower() in ("true", "1", "yes")
+    kafka_state["ingest_source"] = ingest_source
     logger.info("ThreatLens Ingestion Mode: %s", ingest_source)
 
-    worker_task = None
+    tasks = []
+    stream_worker = None
+    alert_consumer = None
+    producer = None
     stop_event = asyncio.Event()
 
-    if ingest_source == "kafka":
+    if enable_bg:
         kafka_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
-        logger.info("Initializing KafkaIngestConsumer connected to %s...", kafka_servers)
-        consumer = KafkaIngestConsumer(
-            pipeline=pipeline,
-            storage=alert_store,
-            ws_manager=ws_manager,
-            kafka_bootstrap_servers=kafka_servers,
-            on_message=lambda topic, data: record_flow_telemetry(data),
-        )
-        worker_task = asyncio.create_task(consumer.run_consumer_loop(stop_event=stop_event))
-    else:
-        # Default: Synthetic event stream generator
-        enable_bg = os.getenv("ENABLE_BACKGROUND_GENERATOR", "true").lower() in ("true", "1", "yes")
-        if enable_bg:
-            worker_task = asyncio.create_task(background_stream_worker(interval_seconds=1.2))
+        flow_topic = os.getenv("KAFKA_FLOW_TOPIC", "network-flows")
+
+        try:
+            stream_worker = StreamWorker(kafka_servers, pipeline=pipeline)
+            kafka_state["connected"] = True
+            tasks.append(asyncio.create_task(asyncio.to_thread(stream_worker.run)))
+            logger.info("StreamWorker started: %s -> detection -> threat-alerts.", flow_topic)
+        except Exception as exc:
+            kafka_state["error"] = f"stream worker: {exc}"
+            logger.error("Kafka unavailable (%s) — live detection pipeline DISABLED.", exc)
+
+        try:
+            alert_consumer = KafkaAlertConsumer(
+                storage=alert_store,
+                ws_manager=ws_manager,
+                bootstrap_servers=kafka_servers,
+            )
+            tasks.append(asyncio.create_task(alert_consumer.run_consumer_loop(stop_event=stop_event)))
+        except Exception as exc:
+            kafka_state["error"] = f"{kafka_state['error']}; alert consumer: {exc}" if kafka_state["error"] else f"alert consumer: {exc}"
+            logger.error("Kafka alert consumer unavailable (%s) — alert persistence DISABLED.", exc)
+
+        if ingest_source == "synthetic":
+            try:
+                from kafka import KafkaProducer
+
+                producer = KafkaProducer(bootstrap_servers=kafka_servers)
+                tasks.append(
+                    asyncio.create_task(
+                        background_event_producer(producer, flow_topic, stop_event)
+                    )
+                )
+            except Exception as exc:
+                kafka_state["error"] = f"{kafka_state['error']}; synthetic producer: {exc}" if kafka_state["error"] else f"synthetic producer: {exc}"
+                logger.error("Kafka producer unavailable (%s) — synthetic demo stream DISABLED.", exc)
 
     yield
 
     stop_event.set()
-    if worker_task:
-        worker_task.cancel()
+    if stream_worker:
+        stream_worker.stop()
+    if alert_consumer:
+        alert_consumer.stop()
+    if producer:
         try:
-            await worker_task
-        except asyncio.CancelledError:
+            producer.close()
+        except Exception:
+            pass
+    for task in tasks:
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
             pass
 
 
@@ -169,6 +208,7 @@ def get_system_health():
         "websocket": {
             "active_clients": ws_manager.client_count,
         },
+        "kafka": kafka_state,
         "archive": {
             "total_alerts_recorded": alert_store.get_alert_count(),
         },

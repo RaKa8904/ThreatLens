@@ -2,7 +2,7 @@
 ThreatLens Botnet C2 Beaconing Detection Engine
 ===============================================
 Detects automated command-and-control heartbeats and beaconing intervals
-using Fast Fourier Transform (FFT) harmonic peak detection and inter-arrival time (IAT) variance.
+using inter-arrival time (IAT) variance and jitter-ratio periodicity analysis.
 """
 
 import math
@@ -20,7 +20,7 @@ from engine.models.base import BaseDetectionEngine, DetectionCandidate
 class BeaconingEngine(BaseDetectionEngine):
     """
     Engine 2: Botnet C2 Beaconing Detection.
-    Evaluates periodicity, FFT harmonic concentration, and low IAT variance across 300s window.
+    Evaluates periodicity, jitter-ratio concentration, and low IAT variance across 300s window.
     """
 
     def __init__(
@@ -37,19 +37,18 @@ class BeaconingEngine(BaseDetectionEngine):
     def threat_class(self) -> ThreatClassEnum:
         return ThreatClassEnum.BOTNET_C2
 
-    def _compute_fft_periodicity(self, deltas: List[float]) -> tuple[float, float]:
+    def _compute_periodicity(self, deltas: List[float]) -> tuple[float, float]:
         """
-        Computes the dominant period and harmonic concentration ratio.
+        Computes the mean inter-arrival period and jitter-ratio concentration score.
         """
         if len(deltas) < 2:
             return 0.0, 0.0
 
         mean_val = sum(deltas) / len(deltas)
-        # Compute normalized variance-to-mean ratio
         variance = sum((d - mean_val) ** 2 for d in deltas) / len(deltas)
         jitter_ratio = math.sqrt(variance) / max(mean_val, 1e-4)
 
-        # High harmonic concentration corresponds to ultra-low jitter
+        # Low jitter relative to period yields high concentration score
         concentration = max(0.0, 1.0 - min(jitter_ratio, 1.0))
         return mean_val, round(concentration, 4)
 
@@ -78,13 +77,13 @@ class BeaconingEngine(BaseDetectionEngine):
             return None
 
         iat_variance = calculate_inter_arrival_variance(sorted_ts)
-        mean_period, fft_concentration = self._compute_fft_periodicity(deltas)
+        mean_period, periodicity_concentration = self._compute_periodicity(deltas)
 
         # Detection condition:
         # 1. Spaced intervals (mean period >= min_period_seconds, not bulk packets in one second)
-        # 2. Ultra-low IAT variance (< 0.05) or high harmonic concentration (> 0.85)
+        # 2. Ultra-low IAT variance (< 0.05) or high periodicity concentration (> 0.85)
         if mean_period >= self.min_period_seconds and (
-            iat_variance <= self.max_variance_threshold or fft_concentration >= 0.85
+            iat_variance <= self.max_variance_threshold or periodicity_concentration >= 0.85
         ):
             # Confidence score scaled with periodicity consistency and sample count
             base_conf = 0.82
@@ -100,8 +99,8 @@ class BeaconingEngine(BaseDetectionEngine):
 
             details = (
                 f"Periodic C2 beaconing detected at {mean_period:.1f}s intervals "
-                f"via FFT harmonic analysis ({len(timestamps)} heartbeats, "
-                f"IAT variance={iat_variance:.6f}s², concentration={fft_concentration:.2f})."
+                f"via jitter-ratio periodicity analysis ({len(timestamps)} heartbeats, "
+                f"IAT variance={iat_variance:.6f}s², concentration={periodicity_concentration:.2f})."
             )
 
             return DetectionCandidate(

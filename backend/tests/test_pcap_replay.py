@@ -2,9 +2,11 @@
 ThreatLens PCAP Replay & Zeek Ingestion Test Suite
 ==================================================
 Milestone 6 / Phase 1 & Phase 5 Validation:
-  1. Parsing and normalization of Zeek JSON logs (conn.log, dns.log, ssl.log).
+  1. Parsing and normalization of Zeek JSON logs (conn.log, dns.log, ssl.log),
+     all conforming to the FlowEventSchema contract.
   2. TCP history flag decoding and session UID cross-protocol correlation.
-  3. Log shipper queue/Kafka publication and consumer batch pipeline routing.
+  3. Log shipper publication to the canonical 'network-flows' topic and
+     routing through the canonical DetectionPipeline.
   4. End-to-end PCAP replay detection across all 6 specialized detection engines:
      - Volumetric & Protocol DDoS (SYN flood)
      - Botnet C2 Beaconing (periodic heartbeats)
@@ -12,7 +14,8 @@ Milestone 6 / Phase 1 & Phase 5 Validation:
      - Encrypted Malware (malicious JA3 fingerprints)
      - Reconnaissance Scan (port/IP sweeping)
      - Data Exfiltration (asymmetric outbound payload)
-  5. File-based batch replay simulation from temporary disk artifacts.
+  5. File-based batch replay simulation from temporary disk artifacts,
+     with alert persistence via the KafkaAlertConsumer path.
 """
 
 import json
@@ -23,16 +26,14 @@ import time
 import unittest
 from typing import List
 
-from backend.app.schemas import ThreatAlertSchema, ThreatClassEnum
+from backend.app.schemas import FlowEventSchema, ThreatAlertSchema, ThreatClassEnum
 from backend.app.storage import ClickHouseAlertStore
 from engine.features.store import SlidingWindowStore
-from engine.kafka_consumer import KafkaIngestConsumer
+from engine.kafka_consumer import KafkaAlertConsumer
 from engine.models.aggregator import AlertAggregator
 from engine.pipeline import DetectionPipeline
 from ingest.producers.zeek_kafka_shipper import (
-    TOPIC_DNS,
     TOPIC_FLOWS,
-    TOPIC_SSL,
     ZeekLogShipper,
     normalize_conn_record,
     normalize_dns_record,
@@ -41,6 +42,30 @@ from ingest.producers.zeek_kafka_shipper import (
     parse_zeek_timestamp,
     safe_int,
 )
+
+
+def drain_queue_through_pipeline(event_queue: queue.Queue, pipeline: DetectionPipeline, max_records: int = 100) -> List[ThreatAlertSchema]:
+    """
+    Drains shipper queue records (the in-memory stand-in for Kafka
+    'network-flows' messages) through the canonical detection pipeline.
+    """
+    alerts: List[ThreatAlertSchema] = []
+    count = 0
+    while not event_queue.empty() and count < max_records:
+        item = event_queue.get_nowait()
+        alerts.extend(pipeline.process_flow_event(item["data"]))
+        count += 1
+    return alerts
+
+
+class StubKafkaConsumer:
+    """Injection stub standing in for a live KafkaConsumer in alert-consumer tests."""
+
+    def poll(self, timeout_ms=0):
+        return {}
+
+    def close(self):
+        pass
 
 
 class TestZeekLogNormalization(unittest.TestCase):
@@ -123,6 +148,8 @@ class TestZeekLogNormalization(unittest.TestCase):
         self.assertEqual(norm["dst_port"], 53)
         self.assertEqual(norm["dns_query"], "malicious-c2.security-research.org")
         self.assertEqual(norm["dns_query_type"], "A")
+        self.assertEqual(norm["flow_id"], "192.168.1.100:53535->8.8.8.8:53")
+        self.assertEqual(norm["protocol"], "UDP")
 
     def test_normalize_ssl_record(self):
         raw_ssl = {
@@ -144,22 +171,46 @@ class TestZeekLogNormalization(unittest.TestCase):
         self.assertEqual(norm["dst_ip"], "203.0.113.15")
         self.assertEqual(norm["server_name"], "api.cloud-command.cc")
         self.assertEqual(norm["ja3_hash"], "72a589da586844d7f0818ce684948eea")
+        self.assertEqual(norm["flow_id"], "192.168.1.200:50123->203.0.113.15:443")
+        self.assertEqual(norm["protocol"], "TCP")
+
+    def test_all_normalizers_satisfy_flow_event_schema(self):
+        samples = [
+            normalize_conn_record({
+                "ts": 1726180000.5, "uid": "Cs1",
+                "id.orig_h": "192.168.1.50", "id.orig_p": 49152,
+                "id.resp_h": "10.0.0.1", "id.resp_p": 443,
+                "proto": "tcp", "orig_bytes": 1250, "resp_bytes": 8420,
+                "history": "ShADF", "orig_pkts": 10, "resp_pkts": 15,
+            }),
+            normalize_dns_record({
+                "ts": 1726180001.0, "uid": "Cs2",
+                "id.orig_h": "192.168.1.100", "id.orig_p": 53535,
+                "id.resp_h": "8.8.8.8", "id.resp_p": 53,
+                "proto": "udp", "query": "malicious-c2.security-research.org",
+                "qtype_name": "A",
+            }),
+            normalize_ssl_record({
+                "ts": 1726180002.0, "uid": "Cs3",
+                "id.orig_h": "192.168.1.200", "id.orig_p": 50123,
+                "id.resp_h": "203.0.113.15", "id.resp_p": 443,
+                "server_name": "api.cloud-command.cc",
+                "ja3": "72a589da586844d7f0818ce684948eea",
+            }),
+        ]
+        for record in samples:
+            flow = FlowEventSchema.model_validate(record)
+            self.assertTrue(flow.flow_id)
 
 
-class TestZeekLogShipperAndConsumer(unittest.TestCase):
-    """Verifies end-to-end coordination between Log Shipper and Kafka Ingest Consumer."""
+class TestZeekLogShipperPublication(unittest.TestCase):
+    """Verifies shipper publication to the canonical 'network-flows' topic and pipeline routing."""
 
     def setUp(self):
         self.shared_queue = queue.Queue()
         self.shipper = ZeekLogShipper(event_queue=self.shared_queue)
         self.store = SlidingWindowStore(use_redis=False)
-        self.storage = ClickHouseAlertStore(auto_connect=False)
         self.pipeline = DetectionPipeline(store=self.store, aggregator=AlertAggregator())
-        self.consumer = KafkaIngestConsumer(
-            pipeline=self.pipeline,
-            storage=self.storage,
-            event_queue=self.shared_queue,
-        )
 
     def test_uid_cross_protocol_correlation(self):
         """Verifies ssl.log JA3 metadata is correlated with conn.log flow using shared session UID."""
@@ -192,8 +243,24 @@ class TestZeekLogShipperAndConsumer(unittest.TestCase):
         self.assertIsNotNone(conn_norm)
         self.assertEqual(conn_norm["ja3_hash"], "a0e9f5d64349fb13191bc781f81f42e1")
 
-    def test_shipper_queue_to_consumer_batch(self):
-        """Verifies that records placed by shipper into queue are consumed and passed to pipeline."""
+    def test_all_log_types_publish_to_canonical_network_flows_topic(self):
+        for log_type, entry in [
+            ("conn", {"ts": 1726180000.5, "uid": "Ct1", "id.orig_h": "10.0.0.1", "id.orig_p": 1,
+                      "id.resp_h": "10.0.0.2", "id.resp_p": 80, "proto": "tcp", "history": "ShAD"}),
+            ("dns", {"ts": 1726180001.0, "uid": "Ct2", "id.orig_h": "10.0.0.1", "id.orig_p": 2,
+                     "id.resp_h": "8.8.8.8", "id.resp_p": 53, "proto": "udp", "query": "a.b.c"}),
+            ("ssl", {"ts": 1726180002.0, "uid": "Ct3", "id.orig_h": "10.0.0.1", "id.orig_p": 3,
+                     "id.resp_h": "10.0.0.4", "id.resp_p": 443, "ja3": "72a589da586844d7f0818ce684948eea"}),
+        ]:
+            self.shared_queue.queue.clear()
+            self.shipper.process_log_line(log_type, json.dumps(entry))
+            self.assertEqual(self.shared_queue.qsize(), 1)
+            item = self.shared_queue.get_nowait()
+            self.assertEqual(item["topic"], TOPIC_FLOWS)
+            self.assertEqual(item["topic"], "network-flows")
+
+    def test_shipper_queue_to_pipeline_benign(self):
+        """Verifies queue records pass through the canonical pipeline; benign traffic yields no alerts."""
         line = json.dumps({
             "ts": time.time(),
             "uid": "Cbenign01",
@@ -209,7 +276,7 @@ class TestZeekLogShipperAndConsumer(unittest.TestCase):
         self.shipper.process_log_line("conn", line)
 
         self.assertEqual(self.shared_queue.qsize(), 1)
-        alerts = self.consumer.consume_batch_from_queue(max_records=10)
+        alerts = drain_queue_through_pipeline(self.shared_queue, self.pipeline)
         self.assertEqual(self.shared_queue.qsize(), 0)
         # Benign traffic produces zero false positive alerts
         self.assertEqual(len(alerts), 0)
@@ -225,13 +292,7 @@ class TestPCAPReplayAttacks(unittest.TestCase):
         self.shared_queue = queue.Queue()
         self.shipper = ZeekLogShipper(event_queue=self.shared_queue)
         self.store = SlidingWindowStore(use_redis=False)
-        self.storage = ClickHouseAlertStore(auto_connect=False)
         self.pipeline = DetectionPipeline(store=self.store, aggregator=AlertAggregator())
-        self.consumer = KafkaIngestConsumer(
-            pipeline=self.pipeline,
-            storage=self.storage,
-            event_queue=self.shared_queue,
-        )
 
     def test_ddos_syn_flood_replay_detection(self):
         """Simulates PCAP replay of a TCP SYN flood against port 80."""
@@ -257,8 +318,7 @@ class TestPCAPReplayAttacks(unittest.TestCase):
                 "history": "S",
             }
             self.shipper.process_log_line("conn", json.dumps(conn_entry))
-            alerts = self.consumer.consume_batch_from_queue(max_records=1)
-            all_alerts.extend(alerts)
+            all_alerts.extend(drain_queue_through_pipeline(self.shared_queue, self.pipeline))
 
         ddos_alerts = [a for a in all_alerts if a.threat_class == ThreatClassEnum.VOLUMETRIC_DOS]
         self.assertGreater(len(ddos_alerts), 0)
@@ -289,8 +349,7 @@ class TestPCAPReplayAttacks(unittest.TestCase):
                 "history": "ShADF",
             }
             self.shipper.process_log_line("conn", json.dumps(conn_entry))
-            alerts = self.consumer.consume_batch_from_queue(max_records=1)
-            all_alerts.extend(alerts)
+            all_alerts.extend(drain_queue_through_pipeline(self.shared_queue, self.pipeline))
 
         c2_alerts = [a for a in all_alerts if a.threat_class == ThreatClassEnum.BOTNET_C2]
         self.assertGreater(len(c2_alerts), 0)
@@ -314,7 +373,7 @@ class TestPCAPReplayAttacks(unittest.TestCase):
         }
 
         self.shipper.process_log_line("dns", json.dumps(dns_entry))
-        alerts = self.consumer.consume_batch_from_queue(max_records=10)
+        alerts = drain_queue_through_pipeline(self.shared_queue, self.pipeline)
 
         dns_alerts = [a for a in alerts if a.threat_class == ThreatClassEnum.DGA_DNS]
         self.assertGreater(len(dns_alerts), 0)
@@ -355,7 +414,7 @@ class TestPCAPReplayAttacks(unittest.TestCase):
         }
         self.shipper.process_log_line("conn", json.dumps(conn_entry))
 
-        alerts = self.consumer.consume_batch_from_queue(max_records=10)
+        alerts = drain_queue_through_pipeline(self.shared_queue, self.pipeline)
         malware_alerts = [a for a in alerts if a.threat_class == ThreatClassEnum.ENCRYPTED_MALWARE]
         self.assertGreater(len(malware_alerts), 0)
         self.assertGreaterEqual(malware_alerts[0].confidence_score, 0.90)
@@ -383,8 +442,7 @@ class TestPCAPReplayAttacks(unittest.TestCase):
                 "history": "S",
             }
             self.shipper.process_log_line("conn", json.dumps(conn_entry))
-            alerts = self.consumer.consume_batch_from_queue(max_records=1)
-            all_alerts.extend(alerts)
+            all_alerts.extend(drain_queue_through_pipeline(self.shared_queue, self.pipeline))
 
         recon_alerts = [a for a in all_alerts if a.threat_class == ThreatClassEnum.RECON_SCAN]
         self.assertGreater(len(recon_alerts), 0)
@@ -409,7 +467,7 @@ class TestPCAPReplayAttacks(unittest.TestCase):
         }
 
         self.shipper.process_log_line("conn", json.dumps(exfil_conn))
-        alerts = self.consumer.consume_batch_from_queue(max_records=10)
+        alerts = drain_queue_through_pipeline(self.shared_queue, self.pipeline)
 
         exfil_alerts = [a for a in alerts if a.threat_class == ThreatClassEnum.DATA_EXFIL]
         self.assertGreater(len(exfil_alerts), 0)
@@ -426,11 +484,7 @@ class TestFileReplayExecution(unittest.TestCase):
         self.store = SlidingWindowStore(use_redis=False)
         self.storage = ClickHouseAlertStore(auto_connect=False)
         self.pipeline = DetectionPipeline(store=self.store, aggregator=AlertAggregator())
-        self.consumer = KafkaIngestConsumer(
-            pipeline=self.pipeline,
-            storage=self.storage,
-            event_queue=self.shared_queue,
-        )
+        self.alert_consumer = KafkaAlertConsumer(storage=self.storage, consumer=StubKafkaConsumer())
 
     def test_batch_file_replay(self):
         """Generates synthetic Zeek log files on disk and validates full batch replay ingestion."""
@@ -473,11 +527,15 @@ class TestFileReplayExecution(unittest.TestCase):
             self.assertEqual(len(conn_records), 1)
             self.assertEqual(self.shared_queue.qsize(), 2)
 
-            # Drain consumer
-            alerts = self.consumer.consume_batch_from_queue(max_records=10)
+            # Drain through the canonical pipeline (network-flows path)
+            alerts = drain_queue_through_pipeline(self.shared_queue, self.pipeline)
             self.assertGreater(len(alerts), 0)
 
-            # Verify persisted in storage
+            # Feed alerts through the alert consumer (threat-alerts path) to persist
+            for alert in alerts:
+                processed = self.alert_consumer.process_message(alert.model_dump_json().encode("utf-8"))
+                self.assertIsNotNone(processed)
+
             persisted = self.storage.get_recent_alerts(limit=10)
             self.assertGreaterEqual(len(persisted), 1)
 

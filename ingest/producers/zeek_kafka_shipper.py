@@ -2,10 +2,8 @@
 ThreatLens Zeek Log Shipper to Kafka
 ====================================
 Tails structured JSON Zeek logs (conn.log, dns.log, ssl.log), normalizes
-entries into standardized telemetry payloads, and publishes them across Kafka topics:
-  - conn.log -> 'traffic-flows'
-  - dns.log  -> 'dns-queries'
-  - ssl.log  -> 'ssl-metadata'
+entries into FlowEventSchema-compatible telemetry payloads, and publishes
+them to the canonical Kafka 'network-flows' topic.
 
 Supports asynchronous tailing and in-memory queue fallback for offline/PCAP replay testing.
 """
@@ -21,9 +19,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
-TOPIC_FLOWS = "traffic-flows"
-TOPIC_DNS = "dns-queries"
-TOPIC_SSL = "ssl-metadata"
+TOPIC_FLOWS = "network-flows"
 
 
 def parse_zeek_timestamp(ts_val: Any) -> float:
@@ -51,9 +47,7 @@ def parse_zeek_history_flags(history: Optional[str]) -> List[str]:
     if not history:
         return []
     flags = []
-    if "S" in history and "h" not in history and "A" not in history:
-        flags.append("SYN")
-    elif "S" in history:
+    if "S" in history:
         flags.append("SYN")
     if "A" in history:
         flags.append("ACK")
@@ -116,17 +110,19 @@ def normalize_conn_record(entry: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def normalize_dns_record(entry: Dict[str, Any]) -> Dict[str, Any]:
-    """Normalizes Zeek dns.log entry."""
+    """Normalizes Zeek dns.log entry into a FlowEventSchema-compatible record."""
     src_ip = entry.get("id.orig_h") or entry.get("src_ip", "0.0.0.0")
     src_port = safe_int(entry.get("id.orig_p") or entry.get("src_port", 0))
     dst_ip = entry.get("id.resp_h") or entry.get("dst_ip", "0.0.0.0")
     dst_port = safe_int(entry.get("id.resp_p") or entry.get("dst_port", 53), default=53)
     return {
         "timestamp": parse_zeek_timestamp(entry.get("ts")),
+        "flow_id": f"{src_ip}:{src_port}->{dst_ip}:{dst_port}",
         "src_ip": src_ip,
         "src_port": src_port,
         "dst_ip": dst_ip,
         "dst_port": dst_port,
+        "protocol": str(entry.get("proto") or "UDP").upper(),
         "dns_query": entry.get("query"),
         "dns_query_type": entry.get("qtype_name", "A"),
         "answers": entry.get("answers", []),
@@ -136,17 +132,19 @@ def normalize_dns_record(entry: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def normalize_ssl_record(entry: Dict[str, Any]) -> Dict[str, Any]:
-    """Normalizes Zeek ssl.log entry."""
+    """Normalizes Zeek ssl.log entry into a FlowEventSchema-compatible record."""
     src_ip = entry.get("id.orig_h") or entry.get("src_ip", "0.0.0.0")
     src_port = safe_int(entry.get("id.orig_p") or entry.get("src_port", 0))
     dst_ip = entry.get("id.resp_h") or entry.get("dst_ip", "0.0.0.0")
     dst_port = safe_int(entry.get("id.resp_p") or entry.get("dst_port", 443), default=443)
     return {
         "timestamp": parse_zeek_timestamp(entry.get("ts")),
+        "flow_id": f"{src_ip}:{src_port}->{dst_ip}:{dst_port}",
         "src_ip": src_ip,
         "src_port": src_port,
         "dst_ip": dst_ip,
         "dst_port": dst_port,
+        "protocol": "TCP",
         "server_name": entry.get("server_name"),
         "ja3_hash": entry.get("ja3"),
         "ja3s_hash": entry.get("ja3s"),
@@ -241,7 +239,7 @@ class ZeekLogShipper:
                     "dns_query": normalized.get("dns_query"),
                     "dns_query_type": normalized.get("dns_query_type"),
                 }
-            self.emit(TOPIC_DNS, normalized)
+            self.emit(TOPIC_FLOWS, normalized)
             return normalized
 
         elif log_type == "ssl":
@@ -250,7 +248,7 @@ class ZeekLogShipper:
                 if uid not in self._correlation_cache:
                     self._correlation_cache[uid] = {}
                 self._correlation_cache[uid]["ja3_hash"] = normalized.get("ja3_hash")
-            self.emit(TOPIC_SSL, normalized)
+            self.emit(TOPIC_FLOWS, normalized)
             return normalized
 
         return None

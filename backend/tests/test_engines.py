@@ -2,10 +2,10 @@
 ThreatLens Specialized Threat Detection Engines Test Suite
 ==========================================================
 Verifies:
-  1. Volumetric DDoS engine dynamic 3-sigma and SYN flood detection.
-  2. Botnet C2 beaconing engine FFT periodicity and IAT variance detection.
+  1. Volumetric DDoS engine 3-sigma static-baseline and SYN flood detection.
+  2. Botnet C2 beaconing engine jitter-ratio periodicity and IAT variance detection.
   3. DGA & DNS tunneling engine Shannon entropy and payload length detection.
-  4. Encrypted malware engine JA3 cryptographic fingerprint and SPLT heuristic detection.
+  4. Encrypted malware engine JA3 signature matching detection.
   5. Reconnaissance scan engine cardinality dispersion and port sweep detection.
   6. Data exfiltration engine outbound byte asymmetry ratio detection.
   7. Benign traffic filtering with zero false-positive alert generation.

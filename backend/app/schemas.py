@@ -7,8 +7,108 @@ sliding-window anomaly detection, and threat alert serialization.
 
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Optional
-from pydantic import BaseModel, Field, ConfigDict
+from typing import List, Optional, Union
+from pydantic import BaseModel, Field, ConfigDict, StrictFloat, StrictInt, StrictStr
+
+
+class FlowEventSchema(BaseModel):
+    """
+    Canonical network flow telemetry contract consumed by the detection pipeline.
+    Mirrors the fields emitted by flow producers (synthetic generator, Zeek shipper).
+    ``simulated_label`` is synthetic-generator ground truth, carried as test and
+    evaluation metadata only; detection engines must never use it for decisions.
+    """
+    model_config = ConfigDict(
+        extra="ignore",
+        json_schema_extra={
+            "example": {
+                "timestamp": 1760000000.123,
+                "flow_id": "192.168.1.105:54321->198.51.100.44:8443",
+                "src_ip": "192.168.1.105",
+                "src_port": 54321,
+                "dst_ip": "198.51.100.44",
+                "dst_port": 8443,
+                "protocol": "TCP",
+                "flags": ["ACK", "PSH"],
+                "bytes_out": 128,
+                "bytes_in": 64,
+                "packets_out": 2,
+                "packets_in": 2,
+                "dns_query": None,
+                "dns_query_type": None,
+                "ja3_hash": "e7d705a3286e19ea42f587b344ee6865",
+                "simulated_label": None,
+            }
+        },
+    )
+
+    timestamp: Union[StrictInt, StrictFloat] = Field(
+        ...,
+        description="Epoch timestamp of the flow event in seconds",
+    )
+    flow_id: StrictStr = Field(
+        ...,
+        min_length=1,
+        description="Unique network flow identifier (e.g., 'src_ip:src_port->dst_ip:dst_port')",
+    )
+    src_ip: StrictStr = Field(
+        ...,
+        min_length=1,
+        description="Source IP address of the flow",
+    )
+    src_port: StrictInt = Field(
+        default=0,
+        description="Source TCP/UDP port",
+    )
+    dst_ip: StrictStr = Field(
+        ...,
+        min_length=1,
+        description="Destination IP address of the flow",
+    )
+    dst_port: StrictInt = Field(
+        ...,
+        description="Destination TCP/UDP port",
+    )
+    protocol: StrictStr = Field(
+        default="TCP",
+        description="Transport protocol (TCP/UDP/ICMP)",
+    )
+    flags: List[StrictStr] = Field(
+        default_factory=list,
+        description="TCP flag names present on the packet (e.g., ['SYN'])",
+    )
+    bytes_out: int = Field(
+        default=0,
+        description="Egress bytes in the flow",
+    )
+    bytes_in: int = Field(
+        default=0,
+        description="Ingress bytes in the flow",
+    )
+    packets_out: int = Field(
+        default=0,
+        description="Egress packet count in the flow",
+    )
+    packets_in: int = Field(
+        default=0,
+        description="Ingress packet count in the flow",
+    )
+    dns_query: Optional[StrictStr] = Field(
+        default=None,
+        description="DNS query name if the flow is a DNS request",
+    )
+    dns_query_type: Optional[StrictStr] = Field(
+        default=None,
+        description="DNS query type (A, TXT, NULL, ...) if applicable",
+    )
+    ja3_hash: Optional[StrictStr] = Field(
+        default=None,
+        description="JA3 TLS client fingerprint hash if TLS flow",
+    )
+    simulated_label: Optional[StrictStr] = Field(
+        default=None,
+        description="Synthetic ground-truth class label; test/evaluation metadata only, never a detection input",
+    )
 
 
 class ThreatClassEnum(str, Enum):
@@ -66,7 +166,7 @@ class EvidenceSchema(BaseModel):
                 "byte_ratio": 0.08,
                 "fan_out_count": 1,
                 "ja3_hash": "e7d705a3286e19ea42f587b344ee6865",
-                "details": "Periodic beaconing detected at 15.0s intervals via FFT harmonic analysis.",
+                "details": "Periodic beaconing detected at 15.0s intervals via jitter-ratio periodicity analysis.",
             }
         },
     )
@@ -114,7 +214,7 @@ class ThreatAlertSchema(BaseModel):
                     "byte_ratio": 0.08,
                     "fan_out_count": 1,
                     "ja3_hash": "e7d705a3286e19ea42f587b344ee6865",
-                    "details": "Periodic beaconing detected at 15.0s intervals via FFT harmonic analysis.",
+                    "details": "Periodic beaconing detected at 15.0s intervals via jitter-ratio periodicity analysis.",
                 },
             }
         },
