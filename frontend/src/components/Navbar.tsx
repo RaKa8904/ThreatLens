@@ -1,0 +1,134 @@
+import { useEffect, useState } from "react";
+import {
+  Shield01Icon as ShieldSecurity,
+  Activity01Icon as Activity01,
+  PlayIcon as Play,
+  PauseIcon as Pause,
+} from "hugeicons-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { ConnectionStatus } from "@/hooks/useThreatSocket";
+
+interface NavbarProps {
+  status: ConnectionStatus;
+  isPaused: boolean;
+  onTogglePause: () => void;
+  totalAlerts: number;
+}
+
+export function Navbar({
+  status,
+  isPaused,
+  onTogglePause,
+  totalAlerts,
+}: NavbarProps) {
+  const [utcTime, setUtcTime] = useState<string>("");
+
+  useEffect(() => {
+    const updateTime = () => {
+      const now = new Date();
+      setUtcTime(now.toISOString().substring(11, 19) + " UTC");
+    };
+    updateTime();
+    const interval = setInterval(updateTime, 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const getStatusBadge = () => {
+    switch (status) {
+      case "CONNECTED":
+        return (
+          <Badge variant="outline" className="border-emerald-500/30 bg-emerald-500/10 text-emerald-400 gap-1.5 px-2.5 py-0.5">
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+            </span>
+            STREAM LIVE
+          </Badge>
+        );
+      case "CONNECTING":
+        return (
+          <Badge variant="outline" className="border-amber-500/30 bg-amber-500/10 text-amber-400 gap-1.5 px-2.5 py-0.5">
+            <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse"></span>
+            CONNECTING...
+          </Badge>
+        );
+      case "DISCONNECTED":
+        return (
+          <Badge variant="outline" className="border-rose-500/30 bg-rose-500/10 text-rose-400 gap-1.5 px-2.5 py-0.5">
+            <span className="h-2 w-2 rounded-full bg-rose-500"></span>
+            OFFLINE (RETRYING)
+          </Badge>
+        );
+    }
+  };
+
+  return (
+    <header className="sticky top-0 z-40 w-full border-b border-slate-800/80 bg-slate-950/90 backdrop-blur-xl px-4 py-2.5">
+      <div className="flex items-center justify-between">
+        {/* Left: Brand & Enclave Status */}
+        <div className="flex items-center space-x-3">
+          <div className="flex items-center justify-center h-8 w-8 rounded-lg bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 shadow-sm shadow-cyan-500/20">
+            <ShieldSecurity className="h-4 w-4" />
+          </div>
+          <div>
+            <div className="flex items-center space-x-2">
+              <span className="text-sm font-bold tracking-tight text-slate-100 uppercase">
+                ThreatLens
+              </span>
+              <span className="text-[10px] px-1.5 py-0.2 rounded font-mono font-semibold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                PASSIVE SOC
+              </span>
+            </div>
+            <p className="text-[10px] text-slate-400 font-mono">
+              ZERO-TRANSMIT TELEMETRY PIPELINE
+            </p>
+          </div>
+        </div>
+
+        {/* Center: System Status Pill */}
+        <div className="hidden md:flex items-center space-x-3">
+          {getStatusBadge()}
+
+          <div className="flex items-center space-x-1.5 text-xs text-slate-400 font-mono bg-slate-900/80 border border-slate-800 px-2.5 py-1 rounded">
+            <Activity01 className="h-3.5 w-3.5 text-slate-400" />
+            <span>INGESTED:</span>
+            <span className="text-slate-200 font-semibold">{totalAlerts}</span>
+          </div>
+        </div>
+
+        {/* Right: Controls & Real-Time Clock */}
+        <div className="flex items-center space-x-3">
+          {/* Pause / Freeze Stream Toggle */}
+          <Button
+            variant={isPaused ? "default" : "outline"}
+            size="sm"
+            onClick={onTogglePause}
+            className={`font-mono text-xs gap-1.5 ${
+              isPaused
+                ? "bg-amber-500 text-slate-950 hover:bg-amber-400 border-amber-500"
+                : "border-slate-800 hover:border-slate-700 text-slate-300"
+            }`}
+          >
+            {isPaused ? (
+              <>
+                <Play className="h-3 w-3 fill-current" />
+                RESUME STREAM
+              </>
+            ) : (
+              <>
+                <Pause className="h-3 w-3 fill-current" />
+                FREEZE VIEW
+              </>
+            )}
+          </Button>
+
+          {/* Real-time UTC Clock */}
+          <div className="hidden sm:flex items-center h-8 px-2.5 rounded bg-slate-900/90 border border-slate-800 text-slate-300 font-mono text-xs tracking-wider">
+            {utcTime || "00:00:00 UTC"}
+          </div>
+        </div>
+      </div>
+    </header>
+  );
+}
