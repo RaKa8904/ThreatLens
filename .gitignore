@@ -72,3 +72,6 @@ redis_data/
 *.swo
 .DS_Store
 Thumbs.db
+
+#documents and user uploads
+*.pdf
