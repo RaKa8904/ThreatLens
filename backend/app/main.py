@@ -20,6 +20,7 @@ from backend.app.schemas import ThreatAlertSchema, ThreatClassEnum
 from backend.app.storage import ClickHouseAlertStore
 from backend.app.websocket_manager import ConnectionManager
 from engine.features.store import SlidingWindowStore
+from engine.kafka_consumer import KafkaIngestConsumer
 from engine.models.aggregator import AlertAggregator
 from engine.pipeline import DetectionPipeline
 from ingest.producers.mock_producer import SyntheticFlowGenerator
@@ -44,6 +45,13 @@ throughput_state = {
 }
 
 
+def record_flow_telemetry(payload: Dict[str, Any]):
+    """Safely increments live throughput counters for processed flows."""
+    throughput_state["total_flows"] += 1
+    throughput_state["total_packets"] += int(payload.get("packets_out") or 1) + int(payload.get("packets_in") or 0)
+    throughput_state["total_bytes"] += int(payload.get("bytes_out") or 0) + int(payload.get("bytes_in") or 0)
+
+
 async def background_stream_worker(interval_seconds: float = 1.5):
     """
     Continuous background task generating synthetic enterprise telemetry,
@@ -56,9 +64,7 @@ async def background_stream_worker(interval_seconds: float = 1.5):
             event = flow_generator.generate_event(anomaly_ratio=0.45)
 
             # Update metrics counters
-            throughput_state["total_flows"] += 1
-            throughput_state["total_packets"] += event.get("packets_out", 1) + event.get("packets_in", 0)
-            throughput_state["total_bytes"] += event.get("bytes_out", 0) + event.get("bytes_in", 0)
+            record_flow_telemetry(event)
 
             # Run detection pipeline
             alerts = pipeline.process_flow_event(event)
@@ -78,14 +84,32 @@ async def background_stream_worker(interval_seconds: float = 1.5):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for application startup and shutdown lifecycle."""
-    # Check if background generator is enabled (defaults to true)
-    enable_bg = os.getenv("ENABLE_BACKGROUND_GENERATOR", "true").lower() in ("true", "1", "yes")
+    ingest_source = os.getenv("INGEST_SOURCE", "synthetic").lower()
+    logger.info("ThreatLens Ingestion Mode: %s", ingest_source)
+
     worker_task = None
-    if enable_bg:
-        worker_task = asyncio.create_task(background_stream_worker(interval_seconds=1.2))
+    stop_event = asyncio.Event()
+
+    if ingest_source == "kafka":
+        kafka_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+        logger.info("Initializing KafkaIngestConsumer connected to %s...", kafka_servers)
+        consumer = KafkaIngestConsumer(
+            pipeline=pipeline,
+            storage=alert_store,
+            ws_manager=ws_manager,
+            kafka_bootstrap_servers=kafka_servers,
+            on_message=lambda topic, data: record_flow_telemetry(data),
+        )
+        worker_task = asyncio.create_task(consumer.run_consumer_loop(stop_event=stop_event))
+    else:
+        # Default: Synthetic event stream generator
+        enable_bg = os.getenv("ENABLE_BACKGROUND_GENERATOR", "true").lower() in ("true", "1", "yes")
+        if enable_bg:
+            worker_task = asyncio.create_task(background_stream_worker(interval_seconds=1.2))
 
     yield
 
+    stop_event.set()
     if worker_task:
         worker_task.cancel()
         try:
@@ -125,6 +149,7 @@ def get_system_health():
     """
     return {
         "status": "healthy",
+        "ingest_source": os.getenv("INGEST_SOURCE", "synthetic").lower(),
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "services": {
             "redis": {

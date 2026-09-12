@@ -38,11 +38,13 @@ class KafkaIngestConsumer:
         kafka_bootstrap_servers: Optional[str] = None,
         topics: Optional[List[str]] = None,
         event_queue: Optional[queue.Queue] = None,
+        on_message: Optional[Callable[[str, Dict[str, Any]], None]] = None,
     ):
         self.pipeline = pipeline if pipeline is not None else DetectionPipeline()
         self.storage = storage if storage is not None else ClickHouseAlertStore(auto_connect=True)
         self.ws_manager = ws_manager
         self.event_queue = event_queue
+        self.on_message = on_message
         self.topics = topics or ["traffic-flows", "dns-queries", "ssl-metadata"]
 
         self.kafka_consumer = None
@@ -74,6 +76,13 @@ class KafkaIngestConsumer:
         Routes an ingested telemetry message into the DetectionPipeline,
         persisting and broadcasting any detected threat alerts.
         """
+        # Execute optional telemetry callback
+        if self.on_message:
+            try:
+                self.on_message(topic, payload)
+            except Exception:
+                pass
+
         # Execute multi-model detection pipeline
         alerts = self.pipeline.process_flow_event(payload)
 
@@ -120,12 +129,14 @@ class KafkaIngestConsumer:
         while self._is_running and (not stop_event or not stop_event.is_set()):
             if self.is_kafka_connected and self.kafka_consumer is not None:
                 try:
-                    for msg in self.kafka_consumer:
-                        if stop_event and stop_event.is_set():
-                            break
-                        self.process_message(msg.topic, msg.value)
+                    records_dict = await asyncio.to_thread(self.kafka_consumer.poll, timeout_ms=500)
+                    for tp, records in records_dict.items():
+                        for msg in records:
+                            if stop_event and stop_event.is_set():
+                                break
+                            self.process_message(msg.topic, msg.value)
                 except Exception as exc:
-                    logger.debug("Kafka poll timeout or transient error: %s", exc)
+                    logger.debug("Kafka poll error: %s", exc)
             elif self.event_queue:
                 self.consume_batch_from_queue(max_records=50)
 
