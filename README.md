@@ -132,7 +132,7 @@ All detection modules, stream topics, database tables, and WebSocket payloads ad
 
 | Threat Class | Detection Methodology | Mathematical Formulation | Window Tier | Operational Trigger |
 | :--- | :--- | :--- | :--- | :--- |
-| **Volumetric & Protocol DDoS** | Static-Baseline 3-Sigma Surge & SYN/UDP Ratio | $Z = \frac{\text{PPS} - \mu}{\sigma} > 3.0$ | 10 Seconds | $Z \ge 3.0$ with $\text{PPS} \ge 100$; SYN flood: SYN packet flow with $\ge 300$ packets, or $\text{SYN Ratio} \ge 0.85$ with $\text{PPS} \ge 100$; UDP storm: $\text{PPS} \ge 200$ with $Z \ge 3.0$. |
+| **Volumetric & Protocol DDoS** | Static-Baseline 3-Sigma Surge & SYN/UDP Ratio | $Z = \frac{\text{PPS} - \mu}{\sigma} > 3.0$ | 10 Seconds | $Z \ge 3.0$ with $\text{PPS} \ge 100$, excluding established bulk transfers (ACK-carrying bidirectional TCP with $\ge 512$ bytes/packet); SYN flood: SYN packet flow with $\ge 300$ packets, or $\text{SYN Ratio} \ge 0.85$ with $\text{PPS} \ge 100$; UDP storm: $\text{PPS} \ge 200$ with $Z \ge 3.0$. |
 | **Botnet C2 Beaconing** | IAT Variance & Jitter-Ratio Periodicity | $\text{Var}(\Delta t) = \frac{1}{N} \sum (\Delta t - \mu)^2$ | 300 Seconds | Recurring connections ($\ge 3$ heartbeats) with mean period $\ge 1.0\text{ s}$ and $\text{Var}(\Delta t) \le 0.05\text{ s}^2$ or periodicity concentration $\ge 0.85$. |
 | **DGA & DNS Tunneling** | Character Shannon Entropy & FQDN Length Analysis | $H(X) = -\sum P(x) \log_2 P(x)$ | 60 Seconds | Domain query $H(X) \ge 3.80\text{ bits}$, query length $> 60\text{ chars}$, or TXT/NULL query with payload $\ge 45\text{ chars}$ or $H(X) \ge 3.60\text{ bits}$. |
 | **Encrypted Malware** | Threat-Intelligence JA3 Exact Matching | $\text{JA3} \in \text{SignatureDB}$ | 300 Seconds | Exact match against curated JA3 database (TrickBot, Cobalt Strike, Emotet, Metasploit, AsyncRAT, QakBot). |
@@ -158,6 +158,7 @@ ThreatLens/
 │       ├── test_api.py             # FastAPI REST & WebSocket endpoint integration tests (TestClient)
 │       ├── test_alert_consumer.py  # KafkaAlertConsumer: valid/malformed alert processing, persistence, broadcast
 │       ├── test_engines.py         # Multi-model detection engines and pipeline integration tests
+│       ├── test_evaluation.py      # C0 harness tests: determinism, metric math, scenario coverage, CLI
 │       ├── test_features.py        # Statistical metrics, Shannon entropy, and SlidingWindowStore tests
 │       ├── test_flow_event_schema.py # FlowEventSchema contract: producer conformance, invalid rejection, WS config
 │       ├── test_ingest_contracts.py  # Canonical topics, no stale split topics, Kafka dependency, no pipeline bypass
@@ -181,6 +182,7 @@ ThreatLens/
 │   │   ├── malware_engine.py       # Encrypted malware engine (JA3 threat-intelligence signature matching)
 │   │   └── recon_engine.py         # Reconnaissance scan engine (Multi-tier endpoint cardinality dispersion)
 │   ├── kafka_consumer.py           # KafkaAlertConsumer: threat-alerts topic → persistence + WebSocket broadcast
+│   ├── evaluation.py               # C0 evaluation harness: deterministic scenarios → metrics (offline, no Kafka)
 │   ├── pipeline.py                 # DetectionPipeline orchestrator & canonical event→store dispatch
 │   └── stream_worker.py            # StreamWorker: network-flows topic → pipeline → threat-alerts topic
 ├── frontend/
@@ -305,6 +307,44 @@ The suite is hermetic: Kafka and other background workers are disabled during te
 
 ---
 
+### Step 6: Run the C0 Evaluation Harness
+
+Measures the current detectors honestly — no thresholds are tuned, poor metrics are recorded rather than hidden.
+
+```bash
+py -3.12 -m engine.evaluation --output eval_results.json
+```
+
+Options: `--seed` (default 1337), `--scenarios-per-class` (default 10).
+
+What it does:
+- Builds deterministic, pure-class scenarios (benign + all 6 threat classes) from the synthetic generator with fixed seeds and fixed timestamps.
+- Replays each scenario through the **same canonical `DetectionPipeline`** in-process (fresh in-memory store per scenario). No Kafka, Redis, ClickHouse, or dashboard required — this is an offline measurement tool, not a second production path.
+- Uses `simulated_label` as ground truth only; detector code never reads it (enforced by `test_no_label_leak.py`).
+- Writes machine-readable JSON (`metrics.overall`, `metrics.per_class`, per-scenario records) and prints a summary table.
+
+Interpreting the output: each scenario record distinguishes `detector_fired` (classes that actually alerted), `expected_class` (ground truth), `correct_detection`, `false_positive_classes`, and `missed_class`. Per-class metrics are one-vs-rest TP/TN/FP/FN, precision, recall, F1, and false-positive rate.
+
+**Measured results (seed 1337, 10 scenarios/class, 70 total)** — these are *measured current behavior*, not targets:
+
+| Threat class | Precision | Recall | F1 | FPR |
+| :--- | :--- | :--- | :--- | :--- |
+| Volumetric & Protocol DDoS | 1.000 | 1.000 | 1.000 | 0.000 |
+| Botnet C2 Beaconing | 1.000 | 1.000 | 1.000 | 0.000 |
+| DGA & DNS Tunneling | 1.000 | 1.000 | 1.000 | 0.000 |
+| Encrypted Malware | 1.000 | 1.000 | 1.000 | 0.000 |
+| Reconnaissance Scan | 1.000 | 1.000 | 1.000 | 0.000 |
+| Data Exfiltration | 1.000 | 1.000 | 1.000 | 0.000 |
+| **Overall (micro)** | **1.000** | **1.000** | **1.000** | **0.000** |
+
+C0 measured a DDoS precision of 0.500: every exfiltration scenario (multi-MB uploads, 1,400+ packets) also triggered the DDoS engine's volumetric-surge rule. C1 fixed this by excluding established bulk transfers from the generic surge rule — an ACK-carrying, bidirectional TCP session moving $\ge 512$-byte packets at high PPS is a bulk upload, not a protocol flood. Genuine floods (small one-way packets: SYN floods, ACK floods, UDP storms) still trigger; verified by regression tests and boundary probes.
+
+Remaining trade-off: a one-way bulk transfer with zero return bytes (e.g. exfiltration over a connection reporting `bytes_in = 0`) is not excluded by the bulk-transfer guard and will still cross-alert as a DDoS surge. Distinguishing that shape requires duration/rate-aware surge gating (planned C2), not packet-size semantics.
+
+**Known evaluation limitations** (planned improvements, not current capabilities): pure-class scenarios only — no background-traffic mixing, no attack/benign interleaving, synthetic input only (no real PCAP/dataset ground truth such as CTU-13 yet), and per-scenario (not per-flow) scoring.
+
+---
+
 ## 7. Roadmap & Milestone Status
 
 | Milestone | Phase | Scope & Deliverables | Status |
@@ -323,11 +363,12 @@ The suite is hermetic: Kafka and other background workers are disabled during te
 ### Implemented
 - Unified Kafka ingest: Zeek shipper and synthetic demo producer both publish JSON `FlowEvent` records to `network-flows`; a single StreamWorker feeds the canonical DetectionPipeline; alerts are published to `threat-alerts` and consumed by the backend for ClickHouse persistence and WebSocket broadcast.
 - FlowEventSchema contract (Pydantic v2) enforced at pipeline entry; malformed messages counted and skipped.
-- Six statistical/heuristic detection engines over Redis-backed sliding windows (10s/60s/300s) with in-memory fallback.
+- Six statistical/heuristic detection engines over Redis-backed sliding windows (10s/60s/300s) with in-memory fallback; the DDoS surge rule excludes established bulk transfers (bidirectional ACK sessions with full-size packets) to avoid cross-alerting on legitimate/exfil bulk uploads.
 - JA3 fingerprint extraction via Zeek's stock JA3 policy and exact-match threat-intel detection.
 - Zeek sensor container with PCAP replay (`zeek -r`) and JSON log shipping; synthetic PCAP generator for offline testing.
 - ClickHouse alert archive with in-memory ring-buffer fallback; REST API (`/api/health`, `/api/alerts`, `/api/metrics/throughput`) and `/ws/threats` WebSocket feed.
-- 110-test hermetic suite (contracts, engines, features, ingest, replay, API).
+- 133-test hermetic suite (contracts, engines, features, ingest, replay, API, evaluation harness).
+- Deterministic evaluation harness (`py -3.12 -m engine.evaluation`) measuring per-class precision/recall/F1/FPR of the current detectors against synthetic ground truth.
 
 ### Planned
 - Kernel-level zero-transmit hardening (data diode, ARP/ICMP/DHCP/IPv6 suppression) on the sensor host at deployment time.

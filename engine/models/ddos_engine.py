@@ -65,7 +65,20 @@ class DDoSEngine(BaseDetectionEngine):
         # 1. 3-Sigma PPS breach (Z > 3.0) with high volume
         # 2. Explicit massive packet burst with SYN flag (typical of SYN floods)
         # 3. High-velocity UDP burst with Z-score breach
-        is_surge = z_score >= self.sigma_threshold and effective_pps >= 100.0
+        #
+        # The generic surge rule (1) excludes established bulk transfers: an
+        # ACK-carrying, bidirectional TCP session moving full-MTU data packets
+        # at high PPS is a legitimate bulk upload/backup, not a protocol flood.
+        # Real floods push small, one-way packets (SYN 40-64B, tiny UDP payloads).
+        avg_packet_bytes = float(bytes_out) / packets_out if packets_out else 0.0
+        is_established_bulk = (
+            "ACK" in flags and bytes_in > 0 and avg_packet_bytes >= 512.0
+        )
+        is_surge = (
+            z_score >= self.sigma_threshold
+            and effective_pps >= 100.0
+            and not is_established_bulk
+        )
         is_syn_flood = (is_syn and packets_out >= 300) or (syn_ratio >= self.syn_ratio_threshold and effective_pps >= 100.0)
         is_udp_storm = protocol == "UDP" and effective_pps >= 200.0 and z_score >= self.sigma_threshold
 

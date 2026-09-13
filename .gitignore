@@ -6,15 +6,15 @@ __pycache__/
 .Python
 build/
 develop-eggs/
-dist/
-downloads/
+/dist/
+/downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+/lib/
+/lib64/
 parts/
 sdist/
-var/
+/var/
 wheels/
 *.egg-info/
 .installed.cfg
@@ -65,6 +65,9 @@ spool/
 clickhouse_data/
 redis_data/
 data/
+
+# Evaluation output artifacts
+eval_results*.json
 
 # IDE & OS metadata
 .vscode/

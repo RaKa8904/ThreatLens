@@ -16,10 +16,12 @@ import unittest
 
 # Disable background generator task during test execution to prevent background thread contention
 os.environ["ENABLE_BACKGROUND_GENERATOR"] = "false"
+# Force the in-memory SlidingWindowStore so tests never wait on Redis reconnect retries
+os.environ["REDIS_ENABLED"] = "false"
 
 from fastapi.testclient import TestClient
 
-from backend.app.main import alert_store, app, ws_manager
+from backend.app.main import alert_store, app, window_store, ws_manager
 from backend.app.schemas import EvidenceSchema, ThreatAlertSchema, ThreatClassEnum
 
 
@@ -75,6 +77,9 @@ class TestFastAPIGateway(unittest.TestCase):
         self.assertIn("pipeline", data["services"])
         self.assertTrue(data["services"]["pipeline"]["active"])
         self.assertEqual(data["services"]["pipeline"]["engines_count"], 6)
+
+    def test_window_store_is_in_memory(self):
+        self.assertFalse(window_store.is_redis_connected)
 
     def test_get_alerts_unfiltered(self):
         response = self.client.get("/api/alerts?limit=10")

@@ -143,6 +143,51 @@ class TestThreatDetectionEngines(unittest.TestCase):
         self.assertGreaterEqual(candidate.confidence_score, 0.80)
         self.assertIn("Data exfiltration", candidate.details)
 
+    def test_ddos_engine_ignores_established_bulk_transfer(self):
+        # Regression (C0 exfil -> DDoS confusion): a high-PPS ACK/PSH flow with
+        # bidirectional bytes and full-MTU packet sizes is an established bulk
+        # transfer (backup/upload/exfil), not a protocol flood.
+        engine = DDoSEngine()
+        flow = self.generator.generate_data_exfiltration()
+        self.assertIn("ACK", flow["flags"])
+        self.assertGreater(flow["bytes_in"], 0)
+
+        self.store.record_10s_packet(
+            src_ip=flow["src_ip"],
+            timestamp=flow["timestamp"],
+            dst_endpoint=f"{flow['dst_ip']}:{flow['dst_port']}",
+            is_syn=False,
+            byte_count=flow["bytes_out"],
+        )
+
+        candidate = engine.evaluate(flow, self.store)
+        self.assertIsNone(candidate)
+
+    def test_ddos_engine_still_fires_on_small_packet_flood(self):
+        # Genuine volumetric flood: high PPS from small one-way packets must
+        # still trigger the surge rule (no SYN concentration required).
+        engine = DDoSEngine()
+        flow = {
+            "flow_id": "203.0.113.5:40000->10.0.0.1:80",
+            "src_ip": "203.0.113.5",
+            "src_port": 40000,
+            "dst_ip": "10.0.0.1",
+            "dst_port": 80,
+            "protocol": "TCP",
+            "flags": ["ACK"],
+            "bytes_out": 60,
+            "bytes_in": 0,
+            "packets_out": 1500,
+            "packets_in": 0,
+            "dns_query": None,
+            "dns_query_type": None,
+            "ja3_hash": None,
+        }
+
+        candidate = engine.evaluate(flow, self.store)
+        self.assertIsNotNone(candidate)
+        self.assertEqual(candidate.threat_class, ThreatClassEnum.VOLUMETRIC_DOS)
+
 
 class TestPipelineAndAggregator(unittest.TestCase):
     """Integration test suite covering AlertAggregator and DetectionPipeline."""
@@ -202,6 +247,16 @@ class TestPipelineAndAggregator(unittest.TestCase):
         exfil = self.generator.generate_data_exfiltration()
         exfil_alerts = self.pipeline.process_flow_event(exfil)
         self.assertTrue(any(a.threat_class == ThreatClassEnum.DATA_EXFIL for a in exfil_alerts))
+
+    def test_exfiltration_scenario_does_not_trigger_ddos(self):
+        # Regression (C0 exfil -> DDoS confusion): bulk-egress flows must alert
+        # as exfiltration only, never as a DDoS surge, across every seed.
+        generator = SyntheticFlowGenerator(seed=1337)
+        for _ in range(10):
+            exfil = generator.generate_data_exfiltration()
+            alerts = self.pipeline.process_flow_event(exfil)
+            self.assertTrue(any(a.threat_class == ThreatClassEnum.DATA_EXFIL for a in alerts))
+            self.assertFalse(any(a.threat_class == ThreatClassEnum.VOLUMETRIC_DOS for a in alerts))
 
     def test_pydantic_schema_strict_conformance(self):
         flow = self.generator.generate_volumetric_ddos()

@@ -33,7 +33,9 @@ logging.basicConfig(level=logging.INFO)
 # Global Component Instances
 ws_manager = ConnectionManager()
 alert_store = ClickHouseAlertStore(auto_connect=True)
-window_store = SlidingWindowStore(use_redis=True)
+window_store = SlidingWindowStore(
+    use_redis=os.getenv("REDIS_ENABLED", "true").lower() != "false"
+)
 alert_aggregator = AlertAggregator()
 pipeline = DetectionPipeline(store=window_store, aggregator=alert_aggregator)
 flow_generator = SyntheticFlowGenerator(seed=int(time.time()))
