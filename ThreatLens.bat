@@ -20,6 +20,16 @@ if not exist .env (
     copy .env.example .env >nul
 )
 
+:: 2. Ensure ThreatLens.ico and Desktop shortcut exist
+if not exist ThreatLens.ico (
+    echo [*] Generating ThreatLens application icon...
+    .\.venv\Scripts\python.exe scripts/generate_ico.py >nul
+)
+if not exist ThreatLens.lnk (
+    echo [*] Registering Desktop shortcut...
+    powershell -ExecutionPolicy Bypass -File create_shortcut.ps1 >nul
+)
+
 :: 2. Check if Docker Desktop is running, launch if not
 tasklist /FI "IMAGENAME eq Docker Desktop.exe" 2>NUL | find /I /N "Docker Desktop.exe">NUL
 if "%ERRORLEVEL%"=="1" (
