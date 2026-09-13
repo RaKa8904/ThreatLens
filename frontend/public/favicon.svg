@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+  <style>
+    :root {
+      --bg: #0b0f19;
+      --ring: #00f0ff;
+      --core: #ff0055;
+      --accent: #38bdf8;
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #0f172a;
+        --ring: #0284c7;
+        --core: #e11d48;
+        --accent: #0369a1;
+      }
+    }
+  </style>
+
+  <!-- Base Badge / Dark Container for Crisp Tab Contrast -->
+  <rect width="32" height="32" rx="7" fill="var(--bg)" />
+
+  <!-- Outer Lens Ring -->
+  <circle cx="16" cy="16" r="9" stroke="var(--ring)" stroke-width="2" stroke-linecap="round" stroke-dasharray="14 4" />
+
+  <!-- Crosshair Reticle Ticks -->
+  <path d="M16 3v4M16 25v4M3 16h4M25 16h4" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" />
+
+  <!-- Focal Threat Core Node -->
+  <circle cx="16" cy="16" r="3" fill="var(--core)" />
+</svg>

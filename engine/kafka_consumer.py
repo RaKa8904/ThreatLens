@@ -59,7 +59,7 @@ class KafkaIngestConsumer:
                     *self.topics,
                     bootstrap_servers=servers,
                     value_deserializer=lambda m: json.loads(m.decode("utf-8")),
-                    auto_offset_reset="latest",
+                    auto_offset_reset="earliest",
                     enable_auto_commit=True,
                     group_id="threatlens-pipeline-group",
                     consumer_timeout_ms=1000,

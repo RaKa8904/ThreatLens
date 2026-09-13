@@ -107,6 +107,9 @@ class ClickHouseAlertStore:
         with self._lock:
             self._memory_ring.appendleft(alert)
 
+        if not self.is_connected:
+            self.connect()
+
         if not self.is_connected or self.client is None:
             return True
 
@@ -149,6 +152,9 @@ class ClickHouseAlertStore:
         """
         Retrieves recent alerts from ClickHouse or falls back to in-memory ring buffer.
         """
+        if not self.is_connected:
+            self.connect()
+
         if self.is_connected and self.client is not None:
             try:
                 query = f"""

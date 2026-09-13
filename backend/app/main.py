@@ -223,6 +223,14 @@ async def websocket_threat_feed(websocket: WebSocket):
     """
     await ws_manager.connect(websocket)
     try:
+        # Send initial recent historical alerts to newly connected dashboard clients
+        recent_alerts = alert_store.get_recent_alerts(limit=50)
+        for alert in reversed(recent_alerts):
+            payload = alert.model_dump() if hasattr(alert, "model_dump") else (alert.dict() if hasattr(alert, "dict") else alert)
+            if isinstance(payload.get("timestamp"), datetime):
+                payload["timestamp"] = payload["timestamp"].isoformat()
+            await websocket.send_json(payload)
+
         # Keep connection open and accept optional client heartbeats / filters
         while True:
             data = await websocket.receive_text()
