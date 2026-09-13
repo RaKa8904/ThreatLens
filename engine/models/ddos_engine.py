@@ -92,6 +92,9 @@ class DDoSEngine(BaseDetectionEngine):
                 fan_out_count=1,
                 ja3_hash=None,
                 details=details,
+                inbound_connections=syn_count,
+                outbound_connections=0,
+                observation_window_seconds=window_metrics.get("window_sec", 10),
             )
 
         return None

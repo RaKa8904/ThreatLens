@@ -113,12 +113,22 @@ class AlertAggregator:
             final_conf = min(1.0, max(0.0, candidate.confidence_score + corroboration_bonus))
             normalized_score = float(round(final_conf, 2))
 
+            evidence = candidate.to_evidence().model_copy(update={
+                "packets_in": event.get("packets_in"),
+                "packets_out": event.get("packets_out"),
+                "inbound_bytes": event.get("bytes_in"),
+                "outbound_bytes": event.get("bytes_out"),
+                "source_ip": event.get("src_ip"),
+                "destination_ip": event.get("dst_ip"),
+                "destination_port": event.get("dst_port"),
+                "protocol": event.get("protocol"),
+            })
             alert = ThreatAlertSchema(
                 timestamp=alert_time,
                 flow_id=flow_id,
                 threat_class=candidate.threat_class,
                 confidence_score=normalized_score,
-                evidence=candidate.to_evidence(),
+                evidence=evidence,
             )
             alerts.append(alert)
 

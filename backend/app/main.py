@@ -60,8 +60,10 @@ async def background_stream_worker(interval_seconds: float = 1.5):
     logger.info("ThreatLens background telemetry streaming worker started.")
     try:
         while True:
-            # Generate simulated flow (alternating benign traffic and anomaly attacks)
-            event = flow_generator.generate_event(anomaly_ratio=0.45)
+            # Keep high-volume background traffic separate from sparse threats.
+            event = flow_generator.generate_event(
+                anomaly_ratio=float(os.getenv("SIMULATION_THREAT_RATIO", "0.005"))
+            )
 
             # Update metrics counters
             record_flow_telemetry(event)
@@ -70,11 +72,15 @@ async def background_stream_worker(interval_seconds: float = 1.5):
             alerts = pipeline.process_flow_event(event)
 
             # Ingest to ClickHouse and broadcast live to WebSocket clients
+            simulated_confidence = event.get("simulated_confidence")
             for alert in alerts:
+                if simulated_confidence is not None:
+                    alert = alert.model_copy(update={"confidence_score": simulated_confidence})
                 alert_store.insert_alert(alert)
                 await ws_manager.broadcast(alert)
 
-            await asyncio.sleep(interval_seconds)
+            flow_rate = max(float(os.getenv("SIMULATION_FLOWS_PER_SECOND", "10")), 0.1)
+            await asyncio.sleep(1.0 / flow_rate)
     except asyncio.CancelledError:
         logger.info("ThreatLens background telemetry streaming worker stopped.")
     except Exception as exc:
@@ -223,13 +229,15 @@ async def websocket_threat_feed(websocket: WebSocket):
     """
     await ws_manager.connect(websocket)
     try:
-        # Send initial recent historical alerts to newly connected dashboard clients
-        recent_alerts = alert_store.get_recent_alerts(limit=50)
-        for alert in reversed(recent_alerts):
-            payload = alert.model_dump() if hasattr(alert, "model_dump") else (alert.dict() if hasattr(alert, "dict") else alert)
-            if isinstance(payload.get("timestamp"), datetime):
-                payload["timestamp"] = payload["timestamp"].isoformat()
-            await websocket.send_json(payload)
+        # Avoid replaying the persistent archive as a burst during live simulation.
+        replay_history = os.getenv("SIMULATION_REPLAY_HISTORY", "false").lower() in ("true", "1", "yes")
+        if os.getenv("INGEST_SOURCE", "synthetic").lower() != "synthetic" or replay_history:
+            recent_alerts = alert_store.get_recent_alerts(limit=50)
+            for alert in reversed(recent_alerts):
+                payload = alert.model_dump() if hasattr(alert, "model_dump") else (alert.dict() if hasattr(alert, "dict") else alert)
+                if isinstance(payload.get("timestamp"), datetime):
+                    payload["timestamp"] = payload["timestamp"].isoformat()
+                await websocket.send_json(payload)
 
         # Keep connection open and accept optional client heartbeats / filters
         while True:

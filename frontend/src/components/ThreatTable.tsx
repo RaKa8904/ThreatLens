@@ -16,12 +16,18 @@ interface ThreatTableProps {
   alerts: ThreatAlertSchema[];
   onSelectAlert: (alert: ThreatAlertSchema) => void;
   selectedAlert: ThreatAlertSchema | null;
+  severityFilter?: "critical" | "high" | null;
+  timeWindowTimestamp?: number | null;
+  onClearTimeWindow?: () => void;
 }
 
 export function ThreatTable({
   alerts,
   onSelectAlert,
   selectedAlert,
+  severityFilter = null,
+  timeWindowTimestamp = null,
+  onClearTimeWindow,
 }: ThreatTableProps) {
   const [selectedClass, setSelectedClass] = useState<string>("ALL");
   const [minConfidence, setMinConfidence] = useState<number>(0.0);
@@ -45,7 +51,7 @@ export function ThreatTable({
     if (score >= 0.50) {
       return (
         <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-yellow-500/20 text-yellow-400 border border-yellow-500/30">
-          MEDIUM ({(score * 100).toFixed(0)}%)
+          MODERATE ({(score * 100).toFixed(0)}%)
         </span>
       );
     }
@@ -75,6 +81,14 @@ export function ThreatTable({
 
   // Filter alerts
   const filteredAlerts = alerts.filter((alert) => {
+    if (timeWindowTimestamp !== null) {
+      const alertTimestamp = new Date(alert.timestamp).getTime();
+      if (Math.abs(alertTimestamp - timeWindowTimestamp) > 5000) return false;
+    }
+
+    if (severityFilter === "critical" && alert.confidence_score < 0.85) return false;
+    if (severityFilter === "high" && (alert.confidence_score < 0.70 || alert.confidence_score >= 0.85)) return false;
+
     if (selectedClass !== "ALL") {
       const clsStr =
         typeof alert.threat_class === "string"
@@ -107,6 +121,16 @@ export function ThreatTable({
           <Badge variant="outline" className="font-mono text-[10px] text-zinc-400 border-zinc-700">
             {filteredAlerts.length} / {alerts.length} Displayed
           </Badge>
+          {timeWindowTimestamp !== null && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={onClearTimeWindow}
+              className="h-6 px-2 text-[10px] font-mono border-cyan-500/40 text-cyan-300"
+            >
+              WINDOW {new Date(timeWindowTimestamp).toISOString().substring(11, 19)} ×
+            </Button>
+          )}
         </div>
 
         {/* Filter controls */}

@@ -86,6 +86,8 @@ class ReconEngine(BaseDetectionEngine):
                 fan_out_count=effective_cardinality,
                 ja3_hash=None,
                 details=details,
+                port_connections=unique_ports,
+                observation_window_seconds=m60.get("window_sec", 60),
             )
 
         return None

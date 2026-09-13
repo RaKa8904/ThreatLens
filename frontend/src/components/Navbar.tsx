@@ -2,24 +2,17 @@ import { useEffect, useState } from "react";
 import {
   Shield01Icon as ShieldSecurity,
   Activity01Icon as Activity01,
-  PlayIcon as Play,
-  PauseIcon as Pause,
 } from "hugeicons-react";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { ConnectionStatus } from "@/hooks/useThreatSocket";
 
 interface NavbarProps {
   status: ConnectionStatus;
-  isPaused: boolean;
-  onTogglePause: () => void;
   totalAlerts: number;
 }
 
 export function Navbar({
   status,
-  isPaused,
-  onTogglePause,
   totalAlerts,
 }: NavbarProps) {
   const [utcTime, setUtcTime] = useState<string>("");
@@ -99,30 +92,6 @@ export function Navbar({
 
         {/* Right: Controls & Real-Time Clock */}
         <div className="flex items-center space-x-3">
-          {/* Pause / Freeze Stream Toggle */}
-          <Button
-            variant={isPaused ? "default" : "outline"}
-            size="sm"
-            onClick={onTogglePause}
-            className={`font-mono text-xs gap-1.5 border transition-all ${
-              isPaused
-                ? "bg-amber-500 text-zinc-950 hover:bg-amber-400 border-amber-500 font-bold"
-                : "border-zinc-800 bg-zinc-900/80 hover:bg-zinc-800 hover:border-zinc-700 text-zinc-200"
-            }`}
-          >
-            {isPaused ? (
-              <>
-                <Play className="h-3.5 w-3.5 fill-current" />
-                RESUME STREAM
-              </>
-            ) : (
-              <>
-                <Pause className="h-3.5 w-3.5 fill-current" />
-                FREEZE VIEW
-              </>
-            )}
-          </Button>
-
           {/* Real-time UTC Clock */}
           <div className="hidden sm:flex items-center h-8 px-3 rounded-md bg-zinc-900/90 border border-zinc-800 text-zinc-300 font-mono text-xs tracking-wider">
             {utcTime || "00:00:00 UTC"}

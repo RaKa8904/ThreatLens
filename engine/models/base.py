@@ -25,6 +25,10 @@ class DetectionCandidate:
     fan_out_count: int = 0
     ja3_hash: Optional[str] = None
     details: str = ""
+    inbound_connections: Optional[int] = None
+    outbound_connections: Optional[int] = None
+    port_connections: Optional[int] = None
+    observation_window_seconds: Optional[int] = None
 
     def to_evidence(self) -> EvidenceSchema:
         """Converts detection metrics into a validated Pydantic EvidenceSchema."""
@@ -35,6 +39,10 @@ class DetectionCandidate:
             fan_out_count=int(max(0, self.fan_out_count)),
             ja3_hash=self.ja3_hash,
             details=self.details,
+            inbound_connections=self.inbound_connections,
+            outbound_connections=self.outbound_connections,
+            port_connections=self.port_connections,
+            observation_window_seconds=self.observation_window_seconds,
         )
 
 

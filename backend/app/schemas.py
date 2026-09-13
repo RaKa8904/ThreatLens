@@ -56,6 +56,18 @@ class EvidenceSchema(BaseModel):
         ...,
         description="Human-readable context and rationale for the triggered detection rule",
     )
+    packets_in: Optional[int] = Field(default=None, ge=0)
+    packets_out: Optional[int] = Field(default=None, ge=0)
+    inbound_connections: Optional[int] = Field(default=None, ge=0)
+    outbound_connections: Optional[int] = Field(default=None, ge=0)
+    port_connections: Optional[int] = Field(default=None, ge=0)
+    inbound_bytes: Optional[int] = Field(default=None, ge=0)
+    outbound_bytes: Optional[int] = Field(default=None, ge=0)
+    source_ip: Optional[str] = None
+    destination_ip: Optional[str] = None
+    destination_port: Optional[int] = Field(default=None, ge=0, le=65535)
+    protocol: Optional[str] = None
+    observation_window_seconds: Optional[int] = Field(default=None, ge=0)
 
     model_config = ConfigDict(
         populate_by_name=True,

@@ -76,6 +76,9 @@ class ExfiltrationEngine(BaseDetectionEngine):
                 fan_out_count=1,
                 ja3_hash=None,
                 details=details,
+                inbound_connections=1,
+                outbound_connections=1,
+                observation_window_seconds=300,
             )
 
         return None

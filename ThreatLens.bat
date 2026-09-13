@@ -51,7 +51,7 @@ if %ERRORLEVEL% NEQ 0 (
 
 REM 5. Launch FastAPI Backend in a dedicated enclave window
 echo [*] Starting ThreatLens Backend API ^& Streaming Gateway (Port 8000)...
-start "ThreatLens Backend API" cmd /k "title ThreatLens Backend Service && cd /d "%~dp0" && set INGEST_SOURCE=kafka&& .\.venv\Scripts\uvicorn backend.app.main:app --port 8000 --reload"
+start "ThreatLens Backend API" cmd /k "title ThreatLens Backend Service && cd /d "%~dp0" && set INGEST_SOURCE=synthetic&& .\.venv\Scripts\uvicorn backend.app.main:app --port 8000 --reload"
 
 echo [*] Initializing Kafka Consumers and Neural Pipeline...
 ping 127.0.0.1 -n 5 >nul

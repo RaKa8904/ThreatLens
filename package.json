@@ -1,0 +1,21 @@
+{
+  "name": "threatlens",
+  "version": "1.0.0",
+  "description": "[![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)\r [![FastAPI](https://img.shields.io/badge/FastAPI-0.110%2B-009688.svg?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)\r [![React 18](https://img.shields.io/badge/React-18.3-61DAFB.svg?logo=react&logoColor=black)](https://react.dev/)\r [![TypeScript](https://img.shields.io/badge/TypeScript-5.7-3178C6.svg?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)\r [![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-3.4-06B6D4.svg?logo=tailwindcss&logoColor=white)](https://tailwindcss.com/)\r [![shadcn/ui](https://img.shields.io/badge/shadcn%2Fui-Components-000000.svg)](https://ui.shadcn.com/)\r [![Redis](https://img.shields.io/badge/Redis-7.0%2B-DC382D.svg?logo=redis&logoColor=white)](https://redis.io/)\r [![ClickHouse](https://img.shields.io/badge/ClickHouse-OLAP-FFCC01.svg?logo=clickhouse&logoColor=black)](https://clickhouse.com/)\r [![Redpanda / Kafka](https://img.shields.io/badge/Redpanda-Kafka_API-FA2546.svg?logo=redpanda&logoColor=white)](https://redpanda.com/)\r [![Zeek](https://img.shields.io/badge/Zeek-6.0%2B-582E91.svg?logo=zeek&logoColor=white)](https://zeek.org/)\r [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED.svg?logo=docker&logoColor=white)](https://www.docker.com/)\r [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-22C55E.svg)](LICENSE)",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RaKa8904/ThreatLens.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/RaKa8904/ThreatLens/issues"
+  },
+  "homepage": "https://github.com/RaKa8904/ThreatLens#readme"
+}

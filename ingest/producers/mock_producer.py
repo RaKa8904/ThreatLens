@@ -45,6 +45,20 @@ COMMON_BENIGN_DOMAINS = [
     "aws.amazon.com",
     "apple.com",
     "wikipedia.org",
+    "nic.in",
+    "gov.in",
+    "sbi.co.in",
+    "airtel.in",
+    "tcs.com",
+    "infosys.com",
+]
+
+INDIA_PUBLIC_ENDPOINTS = [
+    "8.8.8.8",
+    "1.1.1.1",
+    "142.250.190.46",
+    "157.240.241.17",
+    "104.16.132.229",
 ]
 
 
@@ -60,9 +74,12 @@ class SyntheticFlowGenerator:
         self._beacon_state: Dict[str, float] = {}
 
     def _random_internal_ip(self) -> str:
-        return f"192.168.1.{random.randint(10, 200)}"
+        subnet = random.choice(["10.24", "10.42", "172.20", "192.168.40"])
+        return f"{subnet}.{random.randint(1, 240)}.{random.randint(10, 240)}"
 
     def _random_external_ip(self) -> str:
+        if random.random() < 0.55:
+            return random.choice(INDIA_PUBLIC_ENDPOINTS)
         return f"{random.randint(11, 190)}.{random.randint(1, 250)}.{random.randint(1, 250)}.{random.randint(1, 250)}"
 
     # -------------------------------------------------------------------------
@@ -74,7 +91,7 @@ class SyntheticFlowGenerator:
         ts = timestamp if timestamp is not None else time.time()
         src_ip = self._random_internal_ip()
         dst_ip = self._random_external_ip()
-        dst_port = random.choice([80, 443, 8080, 53])
+        dst_port = random.choices([53, 80, 443, 8080, 8443], weights=[25, 10, 45, 8, 12], k=1)[0]
         src_port = random.randint(30000, 65000)
 
         bytes_in = random.randint(500, 15000)
@@ -108,7 +125,7 @@ class SyntheticFlowGenerator:
     def generate_volumetric_ddos(
         self,
         timestamp: Optional[float] = None,
-        target_ip: str = "10.0.0.1",
+        target_ip: str = "10.24.8.10",
         target_port: int = 80,
     ) -> Dict[str, Any]:
         """Simulates high-velocity SYN flood volumetric attack against a victim host."""
@@ -236,8 +253,8 @@ class SyntheticFlowGenerator:
     def generate_recon_scan(
         self,
         timestamp: Optional[float] = None,
-        scanner_ip: str = "192.168.1.88",
-        target_ip: Optional[str] = None,
+        scanner_ip: str = "10.42.9.88",
+        target_ip: Optional[str] = "10.24.12.20",
     ) -> Dict[str, Any]:
         """Simulates reconnaissance port scan with high fan-out across multiple destination ports."""
         ts = timestamp if timestamp is not None else time.time()
@@ -267,7 +284,7 @@ class SyntheticFlowGenerator:
     def generate_data_exfiltration(
         self,
         timestamp: Optional[float] = None,
-        compromised_ip: str = "192.168.1.150",
+        compromised_ip: str = "10.24.22.150",
     ) -> Dict[str, Any]:
         """Simulates asymmetric large-scale data exfiltration outbound to untrusted destination."""
         ts = timestamp if timestamp is not None else time.time()
@@ -311,7 +328,20 @@ class SyntheticFlowGenerator:
             self.generate_data_exfiltration,
         ]
         chosen_generator = random.choice(threat_generators)
-        return chosen_generator()
+        event = chosen_generator()
+
+        # Keep demo confidence levels varied without changing real detector scores.
+        severity_roll = random.random()
+        if severity_roll < 0.15:
+            confidence_range = (0.35, 0.49)
+        elif severity_roll < 0.55:
+            confidence_range = (0.50, 0.69)
+        elif severity_roll < 0.88:
+            confidence_range = (0.70, 0.84)
+        else:
+            confidence_range = (0.86, 0.98)
+        event["simulated_confidence"] = round(random.uniform(*confidence_range), 2)
+        return event
 
 
 class MockEventProducer:

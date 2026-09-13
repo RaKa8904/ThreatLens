@@ -1,20 +1,55 @@
-import { useState } from "react";
+import { type KeyboardEvent, useState } from "react";
 import {
   Alert02Icon as Alert02,
   Shield01Icon as ShieldSecurity,
   FingerPrintIcon as Fingerprint,
 } from "hugeicons-react";
 import { Navbar } from "@/components/Navbar";
-import { ThroughputGauge } from "@/components/ThroughputGauge";
+import { ThroughputGauge, TrafficWindow } from "@/components/ThroughputGauge";
 import { ThreatTable } from "@/components/ThreatTable";
 import { ForensicDrawer } from "@/components/ForensicDrawer";
 import { Card, CardContent } from "@/components/ui/card";
 import { useThreatSocket } from "@/hooks/useThreatSocket";
 import { ThreatAlertSchema } from "@/types/threat";
 
+type SeverityFilter = "critical" | "high" | null;
+
 export function App() {
-  const { alerts, status, isPaused, togglePause, totalReceived } = useThreatSocket();
+  const { alerts, status, totalReceived } = useThreatSocket();
   const [selectedAlert, setSelectedAlert] = useState<ThreatAlertSchema | null>(null);
+  const [severityFilter, setSeverityFilter] = useState<SeverityFilter>(null);
+  const [selectedTrafficWindow, setSelectedTrafficWindow] = useState<TrafficWindow | null>(null);
+
+  const toggleSeverityFilter = (filter: Exclude<SeverityFilter, null>) => {
+    setSeverityFilter((current) => (current === filter ? null : filter));
+  };
+
+  const handleSeverityCardKeyDown = (
+    event: KeyboardEvent<HTMLDivElement>,
+    filter: Exclude<SeverityFilter, null>,
+  ) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      toggleSeverityFilter(filter);
+    }
+  };
+
+  const handleTrafficWindowSelect = (window: TrafficWindow) => {
+    setSelectedTrafficWindow((current) => (current?.timestamp === window.timestamp ? null : window));
+  };
+
+  const openDominantVector = () => {
+    if (!topVectorEntry) return;
+    const dominantAlert = alerts.find((alert) => alert.threat_class === topVector);
+    if (dominantAlert) setSelectedAlert(dominantAlert);
+  };
+
+  const handleDominantVectorKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      openDominantVector();
+    }
+  };
 
   // Compute summary stats from buffered alerts
   const criticalCount = alerts.filter((a) => a.confidence_score >= 0.85).length;
@@ -36,8 +71,6 @@ export function App() {
       {/* Top SOC Navbar */}
       <Navbar
         status={status}
-        isPaused={isPaused}
-        onTogglePause={togglePause}
         totalAlerts={totalReceived}
       />
 
@@ -46,7 +79,16 @@ export function App() {
         {/* KPI Alert Summary Cards */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           {/* Card 1: Critical Threats */}
-          <Card className="border-zinc-800/80 bg-[#090d16]/80 backdrop-blur-xl">
+          <Card
+            role="button"
+            tabIndex={0}
+            aria-pressed={severityFilter === "critical"}
+            onClick={() => toggleSeverityFilter("critical")}
+            onKeyDown={(event) => handleSeverityCardKeyDown(event, "critical")}
+            className={`cursor-pointer border-zinc-800/80 bg-[#090d16]/80 backdrop-blur-xl transition-colors hover:border-rose-500/50 ${
+              severityFilter === "critical" ? "border-rose-500/70 bg-rose-950/20" : ""
+            }`}
+          >
             <CardContent className="p-3.5 flex items-center justify-between">
               <div>
                 <p className="text-[10px] font-mono uppercase text-zinc-400">Critical Threats</p>
@@ -61,7 +103,16 @@ export function App() {
           </Card>
 
           {/* Card 2: High Severity */}
-          <Card className="border-zinc-800/80 bg-[#090d16]/80 backdrop-blur-xl">
+          <Card
+            role="button"
+            tabIndex={0}
+            aria-pressed={severityFilter === "high"}
+            onClick={() => toggleSeverityFilter("high")}
+            onKeyDown={(event) => handleSeverityCardKeyDown(event, "high")}
+            className={`cursor-pointer border-zinc-800/80 bg-[#090d16]/80 backdrop-blur-xl transition-colors hover:border-amber-500/50 ${
+              severityFilter === "high" ? "border-amber-500/70 bg-amber-950/20" : ""
+            }`}
+          >
             <CardContent className="p-3.5 flex items-center justify-between">
               <div>
                 <p className="text-[10px] font-mono uppercase text-zinc-400">High Severity</p>
@@ -91,7 +142,17 @@ export function App() {
           </Card>
 
           {/* Card 4: Top Vector */}
-          <Card className="border-zinc-800/80 bg-[#090d16]/80 backdrop-blur-xl">
+          <Card
+            role="button"
+            tabIndex={topVectorEntry ? 0 : -1}
+            aria-label={topVectorEntry ? `Inspect dominant vector ${topVector}` : "No dominant vector available"}
+            aria-disabled={!topVectorEntry}
+            onClick={openDominantVector}
+            onKeyDown={handleDominantVectorKeyDown}
+            className={`border-zinc-800/80 bg-[#090d16]/80 backdrop-blur-xl ${
+              topVectorEntry ? "cursor-pointer transition-colors hover:border-purple-500/50" : ""
+            }`}
+          >
             <CardContent className="p-3.5 flex items-center justify-between">
               <div className="overflow-hidden pr-1">
                 <p className="text-[10px] font-mono uppercase text-zinc-400">Dominant Vector</p>
@@ -107,13 +168,20 @@ export function App() {
         </div>
 
         {/* Real-time Throughput and Telemetry Gauge */}
-        <ThroughputGauge totalAlerts={totalReceived} />
+        <ThroughputGauge
+          totalAlerts={totalReceived}
+          selectedWindow={selectedTrafficWindow}
+          onWindowSelect={handleTrafficWindowSelect}
+        />
 
         {/* Live Threat Alert Stream Table */}
         <ThreatTable
           alerts={alerts}
           onSelectAlert={(alert) => setSelectedAlert(alert)}
           selectedAlert={selectedAlert}
+          severityFilter={severityFilter}
+          timeWindowTimestamp={selectedTrafficWindow?.timestamp ?? null}
+          onClearTimeWindow={() => setSelectedTrafficWindow(null)}
         />
       </main>
 

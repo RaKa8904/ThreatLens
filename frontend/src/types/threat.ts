@@ -22,6 +22,18 @@ export interface EvidenceSchema {
   fan_out_count: number;
   ja3_hash?: string | null;
   details: string;
+  packets_in?: number | null;
+  packets_out?: number | null;
+  inbound_connections?: number | null;
+  outbound_connections?: number | null;
+  port_connections?: number | null;
+  inbound_bytes?: number | null;
+  outbound_bytes?: number | null;
+  source_ip?: string | null;
+  destination_ip?: string | null;
+  destination_port?: number | null;
+  protocol?: string | null;
+  observation_window_seconds?: number | null;
 }
 
 export interface ThreatAlertSchema {

@@ -2,7 +2,7 @@
  * ThreatLens Resilient WebSocket Consumer Hook
  * ============================================
  * Manages live WebSocket telemetry ingestion, exponential backoff reconnection,
- * rolling memory buffers, and freeze/resume inspection toggles.
+ * rolling memory buffers and exponential reconnect handling.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -17,14 +17,11 @@ const MAX_BACKOFF_MS = 15000;
 export function useThreatSocket(url?: string) {
   const [alerts, setAlerts] = useState<ThreatAlertSchema[]>([]);
   const [status, setStatus] = useState<ConnectionStatus>("CONNECTING");
-  const [isPaused, setIsPaused] = useState<boolean>(false);
   const [totalReceived, setTotalReceived] = useState<number>(0);
 
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
   const backoffRef = useRef<number>(INITIAL_BACKOFF_MS);
-  const isPausedRef = useRef<boolean>(isPaused);
-  isPausedRef.current = isPaused;
 
   const defaultUrl = (() => {
     if (typeof window === "undefined") return "ws://localhost:8000/ws/threats";
@@ -56,9 +53,6 @@ export function useThreatSocket(url?: string) {
           if (data.type === "heartbeat" || data.type === "pong") return;
 
           setTotalReceived((prev) => prev + 1);
-
-          // If paused by analyst, do not append to visible buffer
-          if (isPausedRef.current) return;
 
           setAlerts((prevAlerts) => {
             const updated = [data as ThreatAlertSchema, ...prevAlerts];
@@ -102,10 +96,6 @@ export function useThreatSocket(url?: string) {
     };
   }, [connect]);
 
-  const togglePause = useCallback(() => {
-    setIsPaused((prev) => !prev);
-  }, []);
-
   const clearAlerts = useCallback(() => {
     setAlerts([]);
   }, []);
@@ -113,8 +103,6 @@ export function useThreatSocket(url?: string) {
   return {
     alerts,
     status,
-    isPaused,
-    togglePause,
     clearAlerts,
     totalReceived,
   };

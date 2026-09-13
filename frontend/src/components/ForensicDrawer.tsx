@@ -27,6 +27,19 @@ export function ForensicDrawer({ alert, onClose }: ForensicDrawerProps) {
   if (!alert) return null;
 
   const { evidence } = alert;
+  const isReconnaissance = String(alert.threat_class) === "Reconnaissance Scan";
+  const portConnectionCount = evidence.port_connections ?? evidence.fan_out_count;
+
+  const formatBytes = (bytes: number | null | undefined) => {
+    if (bytes === null || bytes === undefined) return "N/A";
+    if (bytes >= 1_000_000) return `${(bytes / 1_000_000).toFixed(2)} MB`;
+    if (bytes >= 1_000) return `${(bytes / 1_000).toFixed(1)} KB`;
+    return `${bytes} B`;
+  };
+
+  const directionalRatio = evidence.inbound_bytes && evidence.outbound_bytes !== null && evidence.outbound_bytes !== undefined
+    ? `1:${(evidence.outbound_bytes / Math.max(evidence.inbound_bytes, 1)).toFixed(1)}`
+    : "N/A";
 
   const handleCopyJA3 = () => {
     if (evidence.ja3_hash) {
@@ -39,7 +52,7 @@ export function ForensicDrawer({ alert, onClose }: ForensicDrawerProps) {
   const getSeverityBadge = (score: number) => {
     if (score >= 0.85) return <Badge variant="critical">CRITICAL ({Math.round(score * 100)}%)</Badge>;
     if (score >= 0.70) return <Badge variant="high">HIGH ({Math.round(score * 100)}%)</Badge>;
-    if (score >= 0.50) return <Badge variant="medium">MEDIUM ({Math.round(score * 100)}%)</Badge>;
+    if (score >= 0.50) return <Badge variant="medium">MODERATE ({Math.round(score * 100)}%)</Badge>;
     return <Badge variant="low">LOW ({Math.round(score * 100)}%)</Badge>;
   };
 
@@ -114,6 +127,77 @@ export function ForensicDrawer({ alert, onClose }: ForensicDrawerProps) {
                 {evidence.fan_out_count}{" "}
                 <span className="text-[10px] text-slate-500 font-normal">targets</span>
               </div>
+            </div>
+
+            {isReconnaissance && (
+              <div className="rounded border border-amber-500/30 bg-amber-500/[0.04] p-2.5">
+                <div className="text-[10px] uppercase font-mono text-slate-400">
+                  Unique Port Connections
+                </div>
+                <div className="mt-1 text-sm font-semibold font-mono text-amber-300">
+                  {portConnectionCount}
+                  <span className="text-[10px] text-slate-500 font-normal"> ports / 60s</span>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Threat-specific operational insights */}
+          <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/[0.04] p-3 space-y-2">
+            <div className="text-[10px] uppercase font-mono tracking-wider text-cyan-300">
+              Operational Insights
+            </div>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-2 font-mono text-[11px]">
+              <div className="flex justify-between gap-2">
+                <span className="text-slate-400">PROTOCOL:</span>
+                <span className="text-slate-100">{evidence.protocol || "N/A"}</span>
+              </div>
+              <div className="flex justify-between gap-2">
+                <span className="text-slate-400">DEST PORT:</span>
+                <span className="text-slate-100">{evidence.destination_port ?? "N/A"}</span>
+              </div>
+              <div className="flex justify-between gap-2">
+                <span className="text-slate-400">INBOUND PKTS:</span>
+                <span className="text-cyan-200">{evidence.packets_in ?? "N/A"}</span>
+              </div>
+              <div className="flex justify-between gap-2">
+                <span className="text-slate-400">OUTBOUND PKTS:</span>
+                <span className="text-cyan-200">{evidence.packets_out ?? "N/A"}</span>
+              </div>
+              <div className="flex justify-between gap-2">
+                <span className="text-slate-400">INBOUND BYTES:</span>
+                <span className="text-slate-100">{formatBytes(evidence.inbound_bytes)}</span>
+              </div>
+              <div className="flex justify-between gap-2">
+                <span className="text-slate-400">OUTBOUND BYTES:</span>
+                <span className="text-slate-100">{formatBytes(evidence.outbound_bytes)}</span>
+              </div>
+              {alert.threat_class === "Volumetric & Protocol DDoS" && (
+                <div className="col-span-2 flex justify-between gap-2 border-t border-cyan-500/10 pt-2">
+                  <span className="text-slate-400">INBOUND CONNECTION ATTEMPTS:</span>
+                  <span className="font-semibold text-rose-300">{evidence.inbound_connections ?? "N/A"}</span>
+                </div>
+              )}
+              {alert.threat_class === "Data Exfiltration" && (
+                <div className="col-span-2 flex justify-between gap-2 border-t border-cyan-500/10 pt-2">
+                  <span className="text-slate-400">INBOUND:OUTBOUND:</span>
+                  <span className="font-semibold text-amber-300">{directionalRatio}</span>
+                </div>
+              )}
+              {isReconnaissance && (
+                <div className="col-span-2 flex justify-between gap-2 border-t border-cyan-500/10 pt-2">
+                  <span className="text-slate-400">UNIQUE PORT CONNECTIONS:</span>
+                  <span className="font-semibold text-amber-300">
+                    {portConnectionCount}
+                  </span>
+                </div>
+              )}
+              {evidence.observation_window_seconds !== null && evidence.observation_window_seconds !== undefined && (
+                <div className="col-span-2 flex justify-between gap-2 border-t border-cyan-500/10 pt-2">
+                  <span className="text-slate-400">OBSERVATION WINDOW:</span>
+                  <span className="text-slate-100">{evidence.observation_window_seconds}s</span>
+                </div>
+              )}
             </div>
           </div>
 

@@ -14,18 +14,26 @@ import {
 } from "hugeicons-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
-interface ThroughputPoint {
+export interface TrafficWindow {
   time: string;
+  timestamp: number;
   flows: number;
   pps: number;
   mbps: number;
 }
+type ThroughputPoint = TrafficWindow;
 
 interface ThroughputGaugeProps {
   totalAlerts: number;
+  selectedWindow?: TrafficWindow | null;
+  onWindowSelect?: (window: TrafficWindow) => void;
 }
 
-export function ThroughputGauge({ totalAlerts }: ThroughputGaugeProps) {
+export function ThroughputGauge({
+  totalAlerts,
+  selectedWindow = null,
+  onWindowSelect,
+}: ThroughputGaugeProps) {
   const [data, setData] = useState<ThroughputPoint[]>([]);
   const [currentFlows, setCurrentFlows] = useState<number>(0);
   const [currentPPS, setCurrentPPS] = useState<number>(0);
@@ -42,6 +50,7 @@ export function ThroughputGauge({ totalAlerts }: ThroughputGaugeProps) {
         if (!isMounted) return;
 
         const now = new Date();
+        const timestamp = now.getTime();
         const timeLabel = now.toISOString().substring(14, 19);
         const flows = json.flows_per_sec || 0;
         const pps = json.packets_per_sec || 0;
@@ -52,12 +61,13 @@ export function ThroughputGauge({ totalAlerts }: ThroughputGaugeProps) {
         setPeakMbps((prev) => Math.max(prev, mbps));
 
         setData((prev) => {
-          const next = [...prev, { time: timeLabel, flows, pps, mbps }];
+          const next = [...prev, { time: timeLabel, timestamp, flows, pps, mbps }];
           return next.slice(-25); // Rolling 25-point window
         });
       } catch {
         if (!isMounted) return;
         const now = new Date();
+        const timestamp = now.getTime();
         const timeLabel = now.toISOString().substring(14, 19);
         const mockFlows = Math.floor(Math.random() * 15) + 10;
         const mockPPS = Math.floor(Math.random() * 250) + 120;
@@ -67,7 +77,7 @@ export function ThroughputGauge({ totalAlerts }: ThroughputGaugeProps) {
         setCurrentPPS(mockPPS);
 
         setData((prev) => {
-          const next = [...prev, { time: timeLabel, flows: mockFlows, pps: mockPPS, mbps: mockMbps }];
+          const next = [...prev, { time: timeLabel, timestamp, flows: mockFlows, pps: mockPPS, mbps: mockMbps }];
           return next.slice(-25);
         });
       }
@@ -89,6 +99,11 @@ export function ThroughputGauge({ totalAlerts }: ThroughputGaugeProps) {
           <CardTitle className="text-xs uppercase font-mono tracking-wider text-zinc-300">
             Real-Time Network Telemetry & Throughput
           </CardTitle>
+          {selectedWindow && (
+            <span className="text-[10px] font-mono text-cyan-300">
+              WINDOW {new Date(selectedWindow.timestamp).toISOString().substring(11, 19)} · {selectedWindow.flows} FLOWS/S · {selectedWindow.pps} PPS · {selectedWindow.mbps} MB/S
+            </span>
+          )}
         </div>
 
         {/* Top telemetry stat pills */}
@@ -120,7 +135,14 @@ export function ThroughputGauge({ totalAlerts }: ThroughputGaugeProps) {
       <CardContent className="p-3 pt-2">
         <div className="h-36 w-full">
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={data} margin={{ top: 5, right: 5, left: -25, bottom: 0 }}>
+            <AreaChart
+              data={data}
+              margin={{ top: 5, right: 5, left: -25, bottom: 0 }}
+              onClick={(state) => {
+                const point = state?.activePayload?.[0]?.payload as ThroughputPoint | undefined;
+                if (point && onWindowSelect) onWindowSelect(point);
+              }}
+            >
               <defs>
                 <linearGradient id="flowGradient" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor="#10b981" stopOpacity={0.35} />
