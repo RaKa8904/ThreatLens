@@ -4,64 +4,64 @@
 
 @layer base {
   :root {
-    --background: 222 47% 4%;
+    --background: 224 71% 4%;
     --foreground: 210 40% 98%;
 
-    --card: 222 47% 6%;
+    --card: 224 50% 6%;
     --card-foreground: 210 40% 98%;
 
-    --popover: 222 47% 6%;
+    --popover: 224 50% 6%;
     --popover-foreground: 210 40% 98%;
 
-    --primary: 187 92% 45%;
-    --primary-foreground: 222 47% 4%;
+    --primary: 160 84% 39%;
+    --primary-foreground: 210 40% 98%;
 
-    --secondary: 217 33% 15%;
+    --secondary: 217 19% 12%;
     --secondary-foreground: 210 40% 98%;
 
-    --muted: 217 33% 12%;
-    --muted-foreground: 215 20% 65%;
+    --muted: 217 19% 10%;
+    --muted-foreground: 215 16% 60%;
 
-    --accent: 217 33% 18%;
+    --accent: 217 19% 15%;
     --accent-foreground: 210 40% 98%;
 
-    --destructive: 0 84% 60%;
+    --destructive: 350 89% 60%;
     --destructive-foreground: 210 40% 98%;
 
-    --border: 217 33% 16%;
-    --input: 217 33% 16%;
-    --ring: 187 92% 45%;
+    --border: 217 19% 15%;
+    --input: 217 19% 15%;
+    --ring: 160 84% 39%;
 
     --radius: 0.5rem;
   }
 }
 
 body {
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
-  background-color: #030712;
-  color: #f8fafc;
+  font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background-color: #070a14;
+  color: #f4f4f5;
   overflow-x: hidden;
 }
 
-code, kbd, samp, pre {
-  font-family: 'JetBrains Mono', monospace;
+code, kbd, samp, pre, .font-mono {
+  font-family: 'Geist Mono', 'SFMono-Regular', Consolas, monospace !important;
 }
 
-/* Custom SOC Scrollbars */
+/* Custom Minimal Dark SOC Scrollbars */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
 }
 
 ::-webkit-scrollbar-track {
-  background: rgba(15, 23, 42, 0.6);
+  background: rgba(11, 15, 25, 0.8);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(51, 65, 85, 0.7);
+  background: rgba(39, 39, 42, 0.8);
   border-radius: 9999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(100, 116, 139, 0.9);
+  background: rgba(82, 82, 91, 0.9);
 }

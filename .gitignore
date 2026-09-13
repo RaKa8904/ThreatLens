@@ -74,5 +74,6 @@ data/
 .DS_Store
 Thumbs.db
 
-#documents and user uploads
+# documents and user uploads
 *.pdf
+NTRO_PS26145_Compliance_and_Architecture_Guide.md

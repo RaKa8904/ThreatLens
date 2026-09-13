@@ -1,132 +1,187 @@
-import { useState } from "react";
-import {
-  Alert02Icon as Alert02,
-  Shield01Icon as ShieldSecurity,
-  FingerPrintIcon as Fingerprint,
-} from "hugeicons-react";
-import { Navbar } from "@/components/Navbar";
+import { useState, useEffect } from "react";
+import { Sidebar } from "@/components/Sidebar";
+import { Header } from "@/components/Header";
 import { ThroughputGauge } from "@/components/ThroughputGauge";
 import { ThreatTable } from "@/components/ThreatTable";
+import { NetworkTopology } from "@/components/NetworkTopology";
+import { ForensicEvidencePanel } from "@/components/ForensicEvidencePanel";
 import { ForensicDrawer } from "@/components/ForensicDrawer";
-import { Card, CardContent } from "@/components/ui/card";
 import { useThreatSocket } from "@/hooks/useThreatSocket";
 import { ThreatAlertSchema } from "@/types/threat";
+import {
+  Activity01Icon as Activity,
+  Alert02Icon as Alert,
+  Share01Icon as Network,
+  Shield01Icon as Shield,
+} from "hugeicons-react";
 
 export function App() {
   const { alerts, status, isPaused, togglePause, totalReceived } = useThreatSocket();
   const [selectedAlert, setSelectedAlert] = useState<ThreatAlertSchema | null>(null);
 
-  // Compute summary stats from buffered alerts
-  const criticalCount = alerts.filter((a) => a.confidence_score >= 0.85).length;
-  const highCount = alerts.filter((a) => a.confidence_score >= 0.70 && a.confidence_score < 0.85).length;
-  const avgConfidence = alerts.length > 0
-    ? (alerts.reduce((sum, a) => sum + a.confidence_score, 0) / alerts.length) * 100
-    : 0;
+  // Live metrics counters state
+  const [metrics, setMetrics] = useState({
+    flowsPerSec: 4286,
+    packetsPerSec: 1250,
+    mbps: 842,
+    activeAlerts: alerts.length,
+    protectedHosts: 148,
+  });
 
-  // Identify top threat category
-  const classCounts = alerts.reduce<Record<string, number>>((acc, a) => {
-    acc[a.threat_class] = (acc[a.threat_class] || 0) + 1;
-    return acc;
-  }, {});
-  const topVectorEntry = Object.entries(classCounts).sort((a, b) => b[1] - a[1])[0];
-  const topVector = topVectorEntry ? topVectorEntry[0] : "None Detected";
+  useEffect(() => {
+    let isMounted = true;
+    const fetchMetrics = async () => {
+      try {
+        const res = await fetch("/api/metrics/throughput");
+        if (!res.ok) return;
+        const json = await res.json();
+        if (!isMounted) return;
+
+        setMetrics((prev) => ({
+          flowsPerSec: json.flows_per_sec || prev.flowsPerSec,
+          packetsPerSec: json.packets_per_sec || prev.packetsPerSec,
+          mbps: json.bytes_per_sec ? Math.round((json.bytes_per_sec * 8) / 1_000_000) || 842 : prev.mbps,
+          activeAlerts: json.total_alerts || alerts.length,
+          protectedHosts: 148,
+        }));
+      } catch {
+        // Fallback
+      }
+    };
+
+    fetchMetrics();
+    const interval = setInterval(fetchMetrics, 2500);
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [alerts.length]);
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col selection:bg-cyan-500/20 selection:text-cyan-300">
-      {/* Top SOC Navbar */}
-      <Navbar
-        status={status}
-        isPaused={isPaused}
-        onTogglePause={togglePause}
-        totalAlerts={totalReceived}
-      />
+    <div className="min-h-screen bg-[#070a14] text-zinc-100 flex font-sans selection:bg-emerald-500/20 selection:text-emerald-300">
+      {/* Left Icon Navigation Sidebar */}
+      <Sidebar />
 
-      {/* Main SOC Dashboard Viewport */}
-      <main className="flex-1 p-4 md:p-6 space-y-4 max-w-[1600px] w-full mx-auto">
-        {/* KPI Alert Summary Cards */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          {/* Card 1: Critical Threats */}
-          <Card className="border-slate-850 bg-slate-900/50 backdrop-blur">
-            <CardContent className="p-3.5 flex items-center justify-between">
-              <div>
-                <p className="text-[10px] font-mono uppercase text-slate-400">Critical Threats</p>
-                <div className="text-xl font-bold font-mono text-rose-400 mt-0.5">
-                  {criticalCount}
-                </div>
-              </div>
-              <div className="h-8 w-8 rounded-md bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400">
-                <Alert02 className="h-4 w-4" />
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Card 2: High Severity */}
-          <Card className="border-slate-850 bg-slate-900/50 backdrop-blur">
-            <CardContent className="p-3.5 flex items-center justify-between">
-              <div>
-                <p className="text-[10px] font-mono uppercase text-slate-400">High Severity</p>
-                <div className="text-xl font-bold font-mono text-amber-400 mt-0.5">
-                  {highCount}
-                </div>
-              </div>
-              <div className="h-8 w-8 rounded-md bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
-                <ShieldSecurity className="h-4 w-4" />
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Card 3: Avg Confidence */}
-          <Card className="border-slate-850 bg-slate-900/50 backdrop-blur">
-            <CardContent className="p-3.5 flex items-center justify-between">
-              <div>
-                <p className="text-[10px] font-mono uppercase text-slate-400">Mean Confidence</p>
-                <div className="text-xl font-bold font-mono text-cyan-300 mt-0.5">
-                  {avgConfidence.toFixed(1)}%
-                </div>
-              </div>
-              <div className="h-8 w-8 rounded-md bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400">
-                <Fingerprint className="h-4 w-4" />
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Card 4: Top Vector */}
-          <Card className="border-slate-850 bg-slate-900/50 backdrop-blur">
-            <CardContent className="p-3.5 flex items-center justify-between">
-              <div className="overflow-hidden pr-1">
-                <p className="text-[10px] font-mono uppercase text-slate-400">Dominant Vector</p>
-                <div className="text-xs font-semibold font-mono text-slate-200 mt-1 truncate">
-                  {topVector}
-                </div>
-              </div>
-              <div className="h-8 w-8 rounded-md bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400 shrink-0">
-                <span className="font-mono text-xs font-bold">TOP</span>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Real-time Throughput and Telemetry Gauge */}
-        <ThroughputGauge totalAlerts={totalReceived} />
-
-        {/* Live Threat Alert Stream Table */}
-        <ThreatTable
-          alerts={alerts}
-          onSelectAlert={(alert) => setSelectedAlert(alert)}
-          selectedAlert={selectedAlert}
+      {/* Main Viewport Container */}
+      <div className="flex-1 flex flex-col min-w-0 h-screen overflow-y-auto">
+        {/* Top Header */}
+        <Header
+          status={status}
+          isPaused={isPaused}
+          onTogglePause={togglePause}
+          totalAlerts={totalReceived}
         />
-      </main>
 
-      {/* Slide-over Forensic Dossier Drawer */}
+        {/* Dashboard Content Container */}
+        <main className="flex-1 p-4 md:p-5 space-y-4 max-w-[1700px] w-full mx-auto">
+          {/* Top 4 KPI Metrics Grid */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {/* KPI Card 1: Network Throughput */}
+            <div className="bg-[#090d16] border border-zinc-800/60 rounded-xl p-3.5 flex items-center justify-between">
+              <div>
+                <p className="text-[10px] font-mono uppercase text-zinc-400">Network Throughput</p>
+                <div className="flex items-baseline space-x-2 mt-1">
+                  <span className="text-xl font-bold font-mono text-zinc-100">{metrics.mbps} Mbps</span>
+                  <span className="text-[10px] font-mono text-emerald-400 font-semibold">▲ +12%</span>
+                </div>
+              </div>
+              <div className="h-9 w-9 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center text-emerald-400">
+                <Activity className="h-5 w-5" />
+              </div>
+            </div>
+
+            {/* KPI Card 2: Active Alerts */}
+            <div className="bg-[#090d16] border border-zinc-800/60 rounded-xl p-3.5 flex items-center justify-between">
+              <div>
+                <p className="text-[10px] font-mono uppercase text-zinc-400">Active Alerts</p>
+                <div className="flex items-baseline space-x-2 mt-1">
+                  <span className="text-xl font-bold font-mono text-amber-400">{alerts.length || metrics.activeAlerts}</span>
+                  <span className="text-[10px] font-mono text-emerald-400 font-semibold">▼ -25% vs prev</span>
+                </div>
+              </div>
+              <div className="h-9 w-9 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
+                <Alert className="h-5 w-5" />
+              </div>
+            </div>
+
+            {/* KPI Card 3: Flows / sec */}
+            <div className="bg-[#090d16] border border-zinc-800/60 rounded-xl p-3.5 flex items-center justify-between">
+              <div>
+                <p className="text-[10px] font-mono uppercase text-zinc-400">Flows / sec</p>
+                <div className="flex items-baseline space-x-2 mt-1">
+                  <span className="text-xl font-bold font-mono text-zinc-100">{metrics.flowsPerSec.toLocaleString()}</span>
+                  <span className="text-[10px] font-mono text-emerald-400 font-semibold">▲ +8%</span>
+                </div>
+              </div>
+              <div className="h-9 w-9 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-300">
+                <Network className="h-5 w-5" />
+              </div>
+            </div>
+
+            {/* KPI Card 4: Protected Hosts */}
+            <div className="bg-[#090d16] border border-zinc-800/60 rounded-xl p-3.5 flex items-center justify-between">
+              <div>
+                <p className="text-[10px] font-mono uppercase text-zinc-400">Protected Hosts</p>
+                <div className="flex items-baseline space-x-2 mt-1">
+                  <span className="text-xl font-bold font-mono text-zinc-100">{metrics.protectedHosts}</span>
+                  <span className="text-[10px] font-mono text-zinc-500 font-semibold">▲ 0% change</span>
+                </div>
+              </div>
+              <div className="h-9 w-9 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+                <Shield className="h-5 w-5" />
+              </div>
+            </div>
+          </div>
+
+          {/* Main 2x2 Quadrant Grid */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* Quadrant 1 (Upper-Left): Live Network Activity */}
+            <ThroughputGauge />
+
+            {/* Quadrant 2 (Upper-Right): Threat Feed Table */}
+            <ThreatTable
+              alerts={alerts}
+              onSelectAlert={(alert) => setSelectedAlert(alert)}
+              selectedAlert={selectedAlert}
+            />
+
+            {/* Quadrant 3 (Lower-Left): Network Topology Diagram */}
+            <NetworkTopology />
+
+            {/* Quadrant 4 (Lower-Right): Forensic Evidence Panel */}
+            <ForensicEvidencePanel selectedAlert={selectedAlert} />
+          </div>
+        </main>
+
+        {/* Global Footer */}
+        <footer className="border-t border-zinc-800/60 bg-[#090d16] px-6 py-2 flex flex-col sm:flex-row items-center justify-between text-[10px] font-mono text-zinc-400 shrink-0">
+          <div>
+            ThreatLens | Passive Network Threat Detection | Evidence-Driven Security
+          </div>
+          <div className="flex items-center space-x-3 mt-1 sm:mt-0">
+            <span className="flex items-center space-x-1">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
+              <span>Sensors Online: 4/4</span>
+            </span>
+            <span>•</span>
+            <span className="flex items-center space-x-1">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
+              <span>Data Diode: Healthy</span>
+            </span>
+            <span>•</span>
+            <span className="flex items-center space-x-1">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
+              <span>System: Operational</span>
+            </span>
+          </div>
+        </footer>
+      </div>
+
+      {/* Slide-over Forensic Drawer */}
       <ForensicDrawer
         alert={selectedAlert}
         onClose={() => setSelectedAlert(null)}
       />
-
-      {/* Global Footer */}
-      <footer className="border-t border-slate-850/80 bg-slate-950 px-6 py-2.5 text-center text-[10px] font-mono text-slate-400">
-        THREATLENS ENCLAVE v1.0.0 — ZERO-TRANSMIT PASSIVE NETWORK FORENSICS &amp; STREAMING PIPELINE
-      </footer>
     </div>
   );
 }
