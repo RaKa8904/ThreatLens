@@ -36,6 +36,14 @@ class DDoSEngine(BaseDetectionEngine):
     def threat_class(self) -> ThreatClassEnum:
         return ThreatClassEnum.VOLUMETRIC_DOS
 
+    def _update_ema_baseline(self, pps: float, alpha: float = 0.02):
+        """Adapts baseline_mean and baseline_std using Exponential Moving Average under normal traffic."""
+        if pps < self.baseline_mean * 2.5:
+            diff = pps - self.baseline_mean
+            self.baseline_mean += alpha * diff
+            var = (self.baseline_std ** 2) * (1 - alpha) + alpha * (diff ** 2)
+            self.baseline_std = max(1.0, (var ** 0.5))
+
     def evaluate(self, event: dict, store) -> Optional[DetectionCandidate]:
         src_ip = event.get("src_ip", "")
         dst_ip = event.get("dst_ip", "")
@@ -56,6 +64,9 @@ class DDoSEngine(BaseDetectionEngine):
         # Observed instantaneous or window PPS
         effective_pps = max(float(packets_in), float(packets_out), win_pps)
         inbound_dominant = packets_in > packets_out
+
+        # Adaptively update baseline mean/std on ambient non-attack traffic
+        self._update_ema_baseline(effective_pps)
 
         # 3-Sigma Z-Score calculation
         z_score = (effective_pps - self.baseline_mean) / self.baseline_std

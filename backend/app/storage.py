@@ -59,6 +59,8 @@ class ClickHouseAlertStore:
 
         if auto_connect:
             self.connect()
+        else:
+            self.fallback_active = True
 
     def connect(self) -> bool:
         """Attempts to establish connection with ClickHouse and initialize tables."""
@@ -124,7 +126,7 @@ class ClickHouseAlertStore:
         with self._lock:
             self._memory_ring.appendleft(alert)
 
-        if not self.is_connected:
+        if not self.is_connected and not self.fallback_active:
             self.connect()
 
         if not self.is_connected or self.client is None:
@@ -174,7 +176,7 @@ class ClickHouseAlertStore:
         """
         Retrieves recent alerts from ClickHouse or falls back to in-memory ring buffer.
         """
-        if not self.is_connected:
+        if not self.is_connected and not self.fallback_active:
             self.connect()
 
         if self.is_connected and self.client is not None:
@@ -187,10 +189,9 @@ class ClickHouseAlertStore:
                 if threat_class:
                     query += " WHERE threat_class = %(threat_class)s"
                     params["threat_class"] = threat_class
-                if status:
-                    query += " AND " if threat_class else " WHERE "
-                    query += " status = %(status)s"
-                    params["status"] = status
+                # Do not push status filter into ClickHouse SQL query if in-memory status overrides exist,
+                # as ClickHouse ALTER TABLE UPDATE mutations execute asynchronously.
+                # Python post-filtering on line 220 ensures immediate consistency.
 
                 query += " ORDER BY timestamp DESC LIMIT %(limit)s"
 

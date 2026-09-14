@@ -58,11 +58,23 @@ class DNSEngine(BaseDetectionEngine):
         bigrams = [domain[index:index + 2] for index in range(max(0, query_len - 1))]
         ngram_score = len(set(bigrams)) / max(len(bigrams), 1)
 
+        # Consonant-to-vowel ratio & 3-gram character uniqueness
+        subdomain = parts[0]
+        vowels = set("aeiou")
+        consonants = set("bcdfghjklmnpqrstvwxyz")
+        chars = [c.lower() for c in subdomain if c.isalpha()]
+        num_vowels = sum(1 for c in chars if c in vowels)
+        num_consonants = sum(1 for c in chars if c in consonants)
+        consonant_ratio = num_consonants / max(num_vowels + num_consonants, 1)
+
+        trigrams = [domain[index:index + 3] for index in range(max(0, query_len - 2))]
+        trigram_score = len(set(trigrams)) / max(len(trigrams), 1)
+
         # Trigger conditions:
-        # 1. High-entropy DGA domain (H >= 3.80 bits)
+        # 1. High-entropy DGA domain (H >= 3.80 bits) or extreme consonant ratio (>= 0.85)
         # 2. Large DNS tunneling query (> 60 characters or TXT payload > 45 chars)
         # 3. Encoded binary tunnel in TXT or NULL records
-        is_high_entropy = max_entropy >= self.entropy_threshold
+        is_high_entropy = max_entropy >= self.entropy_threshold or (consonant_ratio >= 0.85 and len(subdomain) >= 12)
         is_tunnel_length = query_len >= self.tunnel_length_threshold
         is_txt_tunnel = query_type in ["TXT", "NULL"] and (query_len >= THRESHOLDS["dns"]["txt_tunnel_length"] or max_entropy >= THRESHOLDS["dns"]["txt_entropy_threshold"])
 
@@ -72,7 +84,8 @@ class DNSEngine(BaseDetectionEngine):
             entropy_bonus = min(0.12, max(0.0, (max_entropy - self.entropy_threshold) * 0.3))
             length_bonus = 0.06 if is_tunnel_length else 0.0
             type_bonus = 0.05 if query_type in ["TXT", "NULL"] else 0.0
-            confidence = min(0.99, base_conf + entropy_bonus + length_bonus + type_bonus)
+            trigram_bonus = 0.03 if trigram_score > 0.80 else 0.0
+            confidence = min(0.99, base_conf + entropy_bonus + length_bonus + type_bonus + trigram_bonus)
 
             byte_ratio = calculate_flow_ratio(bytes_out, bytes_in)
             mechanism = "DNS Tunneling (TXT/Payload)" if (is_tunnel_length or is_txt_tunnel) else "DGA Generation"

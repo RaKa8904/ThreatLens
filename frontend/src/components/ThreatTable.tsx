@@ -89,7 +89,7 @@ export function ThreatTable({
     }
     if (score >= 0.70) {
       return (
-        <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30">
+        <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-orange-500/20 text-orange-400 border border-orange-500/40">
           HIGH ({(score * 100).toFixed(0)}%)
         </span>
       );
@@ -112,7 +112,7 @@ export function ThreatTable({
     const width = Math.min(100, Math.max(5, Math.round(score * 100)));
     let barColor = "bg-zinc-500";
     if (score >= 0.85) barColor = "bg-rose-500";
-    else if (score >= 0.70) barColor = "bg-amber-500";
+    else if (score >= 0.70) barColor = "bg-orange-500";
     else if (score >= 0.50) barColor = "bg-yellow-500";
 
     return (
@@ -123,6 +123,35 @@ export function ThreatTable({
         />
       </div>
     );
+  };
+
+  const getStatusStyle = (status: AlertStatusEnum | string | undefined) => {
+    switch (status) {
+      case AlertStatusEnum.NEW:
+      case "new":
+        return "bg-rose-500/15 text-rose-400 border-rose-500/30 font-semibold";
+      case AlertStatusEnum.ACKNOWLEDGED:
+      case "acknowledged":
+        return "bg-sky-500/15 text-sky-400 border-sky-500/30 font-medium";
+      case AlertStatusEnum.INVESTIGATING:
+      case "investigating":
+        return "bg-purple-500/15 text-purple-400 border-purple-500/30 font-medium";
+      case AlertStatusEnum.RESOLVED:
+      case "resolved":
+        return "bg-emerald-500/15 text-emerald-400 border-emerald-500/30 font-medium";
+      case AlertStatusEnum.FALSE_POSITIVE:
+      case "false_positive":
+        return "bg-zinc-800/50 text-zinc-400 border-zinc-700/40";
+      default:
+        return "bg-zinc-900 text-zinc-300 border-zinc-800";
+    }
+  };
+
+  const getRowSeverityGradient = (score: number) => {
+    if (score >= 0.85) return "bg-gradient-to-r from-rose-950/25 via-rose-950/5 to-transparent border-rose-900/40";
+    if (score >= 0.70) return "bg-gradient-to-r from-orange-950/25 via-orange-950/5 to-transparent border-orange-900/40";
+    if (score >= 0.50) return "bg-gradient-to-r from-amber-950/15 via-amber-950/5 to-transparent border-amber-900/30";
+    return "bg-gradient-to-r from-zinc-900/10 via-transparent to-transparent";
   };
 
   const getEvidenceTags = (alert: ThreatAlertSchema) => {
@@ -289,7 +318,7 @@ export function ThreatTable({
                   <TableRow
                     key={`${alert.flow_id}-${alert.timestamp}-${idx}`}
                     onClick={() => onSelectAlert(alert)}
-                    className={`transition-colors duration-1000 border-b border-zinc-800/40 cursor-pointer ${freshAlerts.has(alertKey) && viewMode === "live" ? "bg-emerald-500/[0.12]" : ""} ${
+                    className={`transition-colors duration-1000 border-b border-zinc-800/40 cursor-pointer ${getRowSeverityGradient(alert.confidence_score)} ${freshAlerts.has(alertKey) && viewMode === "live" ? "bg-emerald-500/[0.12]" : ""} ${
                       isSelected
                         ? "bg-zinc-800/90 border-emerald-500/40"
                         : "hover:bg-zinc-900/60"
@@ -333,10 +362,12 @@ export function ThreatTable({
                       </div>
                     </TableCell>
 
-                    <TableCell>
+                    <TableCell onClick={(e) => e.stopPropagation()}>
                       <select
                         value={alert.status ?? AlertStatusEnum.NEW}
                         disabled={!onAlertStatusChange || statusUpdating === getAlertKey(alert)}
+                        onClick={(e) => e.stopPropagation()}
+                        onMouseDown={(e) => e.stopPropagation()}
                         onChange={async (event) => {
                           if (!onAlertStatusChange) return;
                           setStatusUpdating(getAlertKey(alert));
@@ -346,10 +377,14 @@ export function ThreatTable({
                             setStatusUpdating(null);
                           }
                         }}
-                        className="h-7 max-w-32 rounded border border-zinc-800 bg-zinc-900 px-1.5 text-[10px] font-mono text-zinc-300"
+                        className={`h-7 max-w-32 rounded border px-2 text-[10px] font-mono cursor-pointer transition-colors focus:outline-none focus:ring-1 focus:ring-zinc-700 ${getStatusStyle(alert.status)}`}
                         aria-label={`Status for ${alert.flow_id}`}
                       >
-                        {Object.values(AlertStatusEnum).map((statusOption) => <option key={statusOption} value={statusOption}>{statusOption.replace("_", " ")}</option>)}
+                        {Object.values(AlertStatusEnum).map((statusOption) => (
+                          <option key={statusOption} value={statusOption} className="bg-zinc-900 text-zinc-200 font-mono">
+                            {statusOption.replace("_", " ").toUpperCase()}
+                          </option>
+                        ))}
                       </select>
                     </TableCell>
 

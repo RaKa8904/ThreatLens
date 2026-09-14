@@ -268,6 +268,64 @@ class TestPipelineAndAggregator(unittest.TestCase):
         self.assertGreaterEqual(len(alerts), 1)
         self.assertEqual(alerts[0].threat_class, ThreatClassEnum.VOLUMETRIC_DOS)
 
+    def test_ema_baseline_adaptation_in_ddos_engine(self):
+        engine = DDoSEngine(baseline_pps_mean=50.0, baseline_pps_std=10.0)
+        initial_mean = engine.baseline_mean
+        engine._update_ema_baseline(120.0)
+        self.assertGreater(engine.baseline_mean, initial_mean)
+
+    def test_autocorrelation_in_beaconing_engine(self):
+        engine = BeaconingEngine()
+        deltas = [15.0, 15.0, 15.0, 15.0]
+        mean, conc, autocorr = engine._compute_fft_periodicity(deltas)
+        self.assertGreaterEqual(autocorr, 0.70)
+        self.assertGreaterEqual(conc, 0.85)
+
+    def test_trigram_and_consonant_ratio_in_dns_engine(self):
+        engine = DNSEngine()
+        flow = {
+            "dns_query": "bcdfghjklmnpqrstvwxyz.exfil-tunnel.com",
+            "dns_query_type": "TXT",
+            "bytes_out": 500,
+            "bytes_in": 100,
+            "dst_port": 53,
+        }
+        candidate = engine.evaluate(flow, self.store)
+        self.assertIsNotNone(candidate)
+        self.assertEqual(candidate.threat_class, ThreatClassEnum.DGA_DNS)
+        self.assertGreaterEqual(candidate.confidence_score, 0.80)
+
+    def test_ja4_fingerprint_matching_in_malware_engine(self):
+        engine = EncryptedMalwareEngine()
+        flow = {
+            "ja4_hash": "t13d151600_8daaf6152771_000000000000",
+            "bytes_out": 2000,
+            "bytes_in": 5000,
+            "dst_port": 443,
+        }
+        candidate = engine.evaluate(flow, self.store)
+        self.assertIsNotNone(candidate)
+        self.assertEqual(candidate.threat_class, ThreatClassEnum.ENCRYPTED_MALWARE)
+        self.assertIn("Cobalt Strike", candidate.details)
+
+    def test_attack_chain_correlation_bonus(self):
+        src_ip = "192.168.1.188"
+        # 1. Recon flow
+        recon = self.generator.generate_recon_scan(scanner_ip=src_ip)
+        self.pipeline.process_flow_event(recon)
+
+        # 2. C2 flow
+        c2 = self.generator.generate_botnet_c2()
+        c2["src_ip"] = src_ip
+        c2_alerts = self.pipeline.process_flow_event(c2)
+
+        # 3. Exfil flow
+        exfil = self.generator.generate_data_exfiltration()
+        exfil["src_ip"] = src_ip
+        exfil_alerts = self.pipeline.process_flow_event(exfil)
+
+        self.assertTrue(any("Attack Chain" in a.evidence.details for a in exfil_alerts))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -130,13 +130,32 @@ class AlertAggregator:
         corroboration_bonus = 0.03 if len(candidates) > 1 else 0.0
 
         alerts: List[ThreatAlertSchema] = []
-        incident_id = self._incident_id_for_source(event.get("src_ip"), alert_time.timestamp())
+        src_ip = event.get("src_ip")
+        incident_id = self._incident_id_for_source(src_ip, alert_time.timestamp())
+
+        # Track multi-stage attack campaign vectors per incident
+        if not hasattr(self, "_incident_stages"):
+            self._incident_stages: dict[str, set] = {}
+
+        stages_for_incident = self._incident_stages.setdefault(incident_id or "default", set())
+        for cand in candidates:
+            stages_for_incident.add(cand.threat_class.value)
+
+        # Multi-stage attack chain bonus (e.g. Recon + C2 + Exfil)
+        attack_chain_bonus = 0.05 if len(stages_for_incident) >= 3 else (0.02 if len(stages_for_incident) == 2 else 0.0)
+
         for candidate in candidates:
             # Normalize and clamp confidence score into [0.00, 1.00]
-            final_conf = min(1.0, max(0.0, candidate.confidence_score + corroboration_bonus))
+            final_conf = min(1.0, max(0.0, candidate.confidence_score + corroboration_bonus + attack_chain_bonus))
             normalized_score = float(round(final_conf, 2))
 
+            chain_summary = " -> ".join(sorted(stages_for_incident)) if len(stages_for_incident) > 1 else None
+            details_text = candidate.details
+            if chain_summary:
+                details_text = f"[Attack Chain: {chain_summary}] {details_text}"
+
             evidence = candidate.to_evidence().model_copy(update={
+                "details": details_text,
                 "packets_in": event.get("packets_in"),
                 "packets_out": event.get("packets_out"),
                 "inbound_bytes": event.get("bytes_in"),
@@ -156,9 +175,8 @@ class AlertAggregator:
                 "detectors_fired": [item.threat_class.value for item in candidates],
                 "detector_count": len(candidates),
                 "confidence_basis": (
-                    f"{len(candidates)} detectors corroborated; +{corroboration_bonus:.2f} bonus"
-                    if len(candidates) > 1
-                    else "Single detector result; no corroboration bonus"
+                    f"{len(candidates)} detectors corroborated (+{corroboration_bonus:.2f}); "
+                    f"Attack chain stages: {len(stages_for_incident)} (+{attack_chain_bonus:.2f})"
                 ),
             })
             alert = ThreatAlertSchema(

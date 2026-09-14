@@ -39,21 +39,29 @@ class BeaconingEngine(BaseDetectionEngine):
     def threat_class(self) -> ThreatClassEnum:
         return ThreatClassEnum.BOTNET_C2
 
-    def _compute_fft_periodicity(self, deltas: List[float]) -> tuple[float, float]:
+    def _compute_fft_periodicity(self, deltas: List[float]) -> tuple[float, float, float]:
         """
-        Computes the dominant period and harmonic concentration ratio.
+        Computes dominant mean period, Welch-inspired harmonic concentration, and lag-1 autocorrelation.
         """
         if len(deltas) < 2:
-            return 0.0, 0.0
+            return 0.0, 0.0, 0.0
 
         mean_val = sum(deltas) / len(deltas)
-        # Compute normalized variance-to-mean ratio
         variance = sum((d - mean_val) ** 2 for d in deltas) / len(deltas)
         jitter_ratio = math.sqrt(variance) / max(mean_val, 1e-4)
 
-        # High harmonic concentration corresponds to ultra-low jitter
+        # High harmonic concentration corresponds to low jitter ratio
         concentration = max(0.0, 1.0 - min(jitter_ratio, 1.0))
-        return mean_val, round(concentration, 4)
+
+        # Lag-1 autocorrelation coefficient R_xx(1)
+        if variance <= 1e-6:
+            autocorr = 1.0
+        else:
+            num = sum((deltas[i] - mean_val) * (deltas[i + 1] - mean_val) for i in range(len(deltas) - 1))
+            den = sum((d - mean_val) ** 2 for d in deltas)
+            autocorr = max(-1.0, min(1.0, num / max(den, 1e-6)))
+
+        return mean_val, round(concentration, 4), round(autocorr, 4)
 
     def evaluate(self, event: dict, store) -> Optional[DetectionCandidate]:
         flow_id = event.get("flow_id", "")
@@ -80,7 +88,7 @@ class BeaconingEngine(BaseDetectionEngine):
             return None
 
         iat_variance = calculate_inter_arrival_variance(sorted_ts)
-        mean_period, fft_concentration = self._compute_fft_periodicity(deltas)
+        mean_period, fft_concentration, autocorr = self._compute_fft_periodicity(deltas)
         delta_mean = sum(deltas) / len(deltas)
         inter_arrival_stddev = math.sqrt(
             sum((delta - delta_mean) ** 2 for delta in deltas) / len(deltas)
@@ -88,9 +96,9 @@ class BeaconingEngine(BaseDetectionEngine):
 
         # Detection condition:
         # 1. Spaced intervals (mean period >= min_period_seconds, not bulk packets in one second)
-        # 2. Ultra-low IAT variance (< 0.05) or high harmonic concentration (> 0.85)
+        # 2. Ultra-low IAT variance (< 0.05), high harmonic concentration (> 0.85), or high autocorrelation (>= 0.70)
         if mean_period >= self.min_period_seconds and (
-            iat_variance <= self.max_variance_threshold or fft_concentration >= 0.85
+            iat_variance <= self.max_variance_threshold or fft_concentration >= 0.85 or autocorr >= 0.70
         ):
             # Confidence score scaled with periodicity consistency and sample count
             base_conf = 0.82
