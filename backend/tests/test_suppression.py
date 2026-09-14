@@ -7,18 +7,19 @@ Verifies:
   3. Exact source and destination IP suppression.
   4. Combined IP and threat-class specific suppression rules.
   5. Automatic expiration handling (expires_at).
-  6. Pipeline suppression tagging (suppressed=True) and WebSocket broadcast exclusion.
+  6. Enabling/disabling rules through RuntimeConfigStore.
+  7. Pipeline suppression tagging (suppressed=True) with detection still executing.
 """
 
 from datetime import datetime, timedelta, timezone
 import unittest
 import uuid
 
-from backend.app.schemas import AlertStatusEnum, EvidenceSchema, SuppressionRule, ThreatAlertSchema, ThreatClassEnum
-from backend.app.storage import ClickHouseAlertStore
+from backend.app.schemas import SuppressionRule, ThreatClassEnum
 from engine.features.store import SlidingWindowStore
 from engine.models.aggregator import AlertAggregator
 from engine.pipeline import DetectionPipeline
+from engine.runtime_config import RuntimeConfigStore
 from ingest.producers.mock_producer import SyntheticFlowGenerator
 
 
@@ -27,11 +28,11 @@ class TestAllowlistAndSuppressionRules(unittest.TestCase):
 
     def setUp(self):
         self.store = SlidingWindowStore(use_redis=False)
-        self.storage = ClickHouseAlertStore(auto_connect=False)
+        self.rules = RuntimeConfigStore(use_redis=False)
         self.pipeline = DetectionPipeline(
             store=self.store,
             aggregator=AlertAggregator(),
-            suppression_provider=self.storage,
+            suppression_provider=self.rules,
         )
         self.generator = SyntheticFlowGenerator(seed=42)
 
@@ -40,17 +41,17 @@ class TestAllowlistAndSuppressionRules(unittest.TestCase):
             id=str(uuid.uuid4()),
             rule_type="source_ip",
             source_ip="192.168.1.0/24",
-            reason="Corporate VPN Allowlist Subnet",
+            description="Corporate VPN Allowlist Subnet",
         )
-        created = self.storage.create_suppression_rule(rule)
+        created = self.rules.create_suppression_rule(rule)
         self.assertEqual(created.id, rule.id)
 
-        rules = self.storage.get_suppression_rules()
+        rules = self.rules.get_suppression_rules()
         self.assertTrue(any(r.id == rule.id for r in rules))
 
-        deleted = self.storage.delete_suppression_rule(rule.id)
+        deleted = self.rules.delete_suppression_rule(rule.id)
         self.assertTrue(deleted)
-        self.assertFalse(any(r.id == rule.id for r in self.storage.get_suppression_rules()))
+        self.assertFalse(any(r.id == rule.id for r in self.rules.get_suppression_rules()))
 
     def test_cidr_source_ip_allowlist_suppression(self):
         # Create CIDR rule for 192.168.1.0/24
@@ -58,9 +59,9 @@ class TestAllowlistAndSuppressionRules(unittest.TestCase):
             id="rule-cidr-1",
             rule_type="source_ip",
             source_ip="192.168.1.0/24",
-            reason="Internal trusted scanner subnet",
+            description="Internal trusted scanner subnet",
         )
-        self.storage.create_suppression_rule(rule)
+        self.rules.create_suppression_rule(rule)
 
         # Flow from 192.168.1.55 (inside subnet)
         flow_inside = self.generator.generate_volumetric_ddos(target_ip="10.0.0.1")
@@ -69,6 +70,7 @@ class TestAllowlistAndSuppressionRules(unittest.TestCase):
         alerts_inside = self.pipeline.process_flow_event(flow_inside)
         self.assertGreater(len(alerts_inside), 0)
         self.assertTrue(all(a.suppressed for a in alerts_inside))
+        self.assertTrue(all(a.suppression_rule_id == "rule-cidr-1" for a in alerts_inside))
 
         # Flow from 203.0.113.88 (outside subnet)
         flow_outside = self.generator.generate_volumetric_ddos(target_ip="10.0.0.1")
@@ -83,9 +85,9 @@ class TestAllowlistAndSuppressionRules(unittest.TestCase):
             id="rule-dst-1",
             rule_type="destination_ip",
             destination_ip="10.0.0.99",
-            reason="Whitelisted honeypot destination",
+            description="Whitelisted honeypot destination",
         )
-        self.storage.create_suppression_rule(rule)
+        self.rules.create_suppression_rule(rule)
 
         flow = self.generator.generate_volumetric_ddos(target_ip="10.0.0.99")
         alerts = self.pipeline.process_flow_event(flow)
@@ -98,9 +100,9 @@ class TestAllowlistAndSuppressionRules(unittest.TestCase):
             rule_type="source_ip_threat_class",
             source_ip="192.168.1.75",
             threat_class=ThreatClassEnum.DGA_DNS,
-            reason="Authorized DNS security crawler",
+            description="Authorized DNS security crawler",
         )
-        self.storage.create_suppression_rule(rule)
+        self.rules.create_suppression_rule(rule)
 
         # Flow matching both source IP and threat class
         dga_flow = self.generator.generate_dga_dns_tunnel()
@@ -117,9 +119,9 @@ class TestAllowlistAndSuppressionRules(unittest.TestCase):
             rule_type="source_ip",
             source_ip="192.168.1.100",
             expires_at=datetime.now(timezone.utc) - timedelta(seconds=60),
-            reason="Temporary past maintenance window",
+            description="Temporary past maintenance window",
         )
-        self.storage.create_suppression_rule(expired_rule)
+        self.rules.create_suppression_rule(expired_rule)
 
         flow = self.generator.generate_volumetric_ddos()
         flow["src_ip"] = "192.168.1.100"
@@ -127,6 +129,48 @@ class TestAllowlistAndSuppressionRules(unittest.TestCase):
         alerts = self.pipeline.process_flow_event(flow)
         self.assertGreater(len(alerts), 0)
         self.assertFalse(any(a.suppressed for a in alerts))
+
+    def test_disabled_rule_can_be_re_enabled(self):
+        rule = SuppressionRule(
+            id="rule-toggle-1",
+            rule_type="source_ip",
+            source_ip="192.168.1.150",
+            description="Backup server nightly job",
+        )
+        self.rules.create_suppression_rule(rule)
+
+        flow = self.generator.generate_volumetric_ddos()
+        flow["src_ip"] = "192.168.1.150"
+
+        suppressed_alerts = self.pipeline.process_flow_event(flow)
+        self.assertGreater(len(suppressed_alerts), 0)
+        self.assertTrue(all(a.suppressed for a in suppressed_alerts))
+
+        # Disable through the store: detection still runs, delivery resumes.
+        updated = self.rules.update_suppression_rule(rule.id, enabled=False)
+        self.assertIsNotNone(updated)
+        self.assertFalse(updated.enabled)
+
+        flow_again = self.generator.generate_volumetric_ddos()
+        flow_again["src_ip"] = "192.168.1.150"
+
+        alerts_after_disable = self.pipeline.process_flow_event(flow_again)
+        self.assertGreater(len(alerts_after_disable), 0)
+        self.assertFalse(any(a.suppressed for a in alerts_after_disable))
+
+        # Re-enable: suppression applies again.
+        re_enabled = self.rules.update_suppression_rule(rule.id, enabled=True)
+        self.assertTrue(re_enabled.enabled)
+
+        flow_third = self.generator.generate_volumetric_ddos()
+        flow_third["src_ip"] = "192.168.1.150"
+
+        alerts_after_enable = self.pipeline.process_flow_event(flow_third)
+        self.assertGreater(len(alerts_after_enable), 0)
+        self.assertTrue(all(a.suppressed for a in alerts_after_enable))
+
+    def test_update_unknown_rule_returns_none(self):
+        self.assertIsNone(self.rules.update_suppression_rule("missing-id", enabled=False))
 
 
 if __name__ == "__main__":

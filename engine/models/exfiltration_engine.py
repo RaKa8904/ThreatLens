@@ -58,15 +58,10 @@ class ExfiltrationEngine(BaseDetectionEngine):
         # Trigger conditions:
         # 1. Heavy asymmetric egress: outbound bytes >= 1MB and ratio >= 20.0
         # 2. Massive single flow upload (>= 5MB)
-        # 3. Explicit Data Exfiltration simulation
         is_asymmetric_leak = total_out >= min_egress_bytes and flow_ratio >= min_ratio_threshold
         is_massive_upload = total_out >= massive_upload_bytes and flow_ratio >= massive_upload_ratio
-        is_simulated = (
-            event.get("simulated_label") == "Data Exfiltration"
-            and bytes_out >= 500_000
-        )
 
-        if is_asymmetric_leak or is_massive_upload or is_simulated:
+        if is_asymmetric_leak or is_massive_upload:
             base_conf = 0.82
             vol_bonus = min(0.12, (total_out / 10_000_000) * 0.05)
             ratio_bonus = min(0.05, (flow_ratio / 100.0) * 0.05)

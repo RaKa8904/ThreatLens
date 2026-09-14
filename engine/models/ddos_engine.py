@@ -2,7 +2,7 @@
 ThreatLens Volumetric & Protocol DDoS Detection Engine
 ======================================================
 Detects high-rate SYN flood, UDP storm, and PPS surges using rolling 10-second
-sliding-window metrics and dynamic 3-sigma deviation thresholding.
+sliding-window metrics and analyst-tunable 3-sigma deviation thresholding.
 """
 
 from typing import Optional
@@ -33,6 +33,11 @@ class DDoSEngine(BaseDetectionEngine):
             sigma_threshold=sigma_threshold,
             syn_ratio_threshold=syn_ratio_threshold,
         )
+        # Seed the EMA adaptive-baseline state from the live thresholds. Note:
+        # detection currently reads the live thresholds directly, so this state
+        # does not affect decisions until the EMA is wired into the z-score.
+        self.baseline_mean = float(self.threshold("baseline_pps_mean"))
+        self.baseline_std = max(float(self.threshold("baseline_pps_std")), 1.0)
 
     @property
     def threat_class(self) -> ThreatClassEnum:

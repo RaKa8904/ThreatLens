@@ -175,7 +175,8 @@ ThreatLens/
 │       ├── test_engines.py         # Multi-model detection engines and pipeline integration tests
 │       ├── test_features.py        # Statistical metrics, Shannon entropy, and SlidingWindowStore tests
 │       ├── test_pcap_replay.py     # Zeek JSON normalization, UID correlation & PCAP replay attack validation
-│       └── test_runtime_config.py  # Runtime threshold/suppression config: validation, persistence & suppression integration
+│       ├── test_runtime_config.py  # Runtime threshold/suppression config: validation, persistence & suppression integration
+│       └── test_suppression.py     # Allowlist & suppression rule mechanics through RuntimeConfigStore and the pipeline
 ├── engine/
 │   ├── __init__.py
 │   ├── config.py                   # Authoritative detector threshold values, specs & live-read accessors
@@ -412,9 +413,10 @@ OK
 | **04** | Streaming Gateway & Persistence | ClickHouse columnar storage client, FastAPI REST API, and sub-50ms WebSocket broadcast hub. | Complete |
 | **05** | High-Density SOC Dashboard | React 18 dashboard with shadcn/ui, Hugeicons, Recharts, slide-over ForensicDrawer, and freeze toggle. | Complete |
 | **06** | Hardware TAP & Live PCAP Replay | Containerized Zeek sensor (watch/replay/live), local.zeek JSON/JA3 policy, asynchronous ZeekLogShipper, KafkaIngestConsumer, sample PCAP generator, and 15 validation tests. | Complete |
+| **07** | Live Alert Suppression & Rule Tuning | Analyst-configurable runtime thresholds (22 parameters, 7 rules), suppression/allowlist rules with CIDR + expiry + enable/disable, Redis-mirrored persistence with honest memory-mode reporting, and the Detection Configuration dashboard panel. | Complete |
 
 > [!NOTE]
-> All six core architecture milestones are complete, verified with 50 passing end-to-end tests and active containerized components. Future roadmap items include kernel-bypass eBPF/XDP hardware filtering and automated BGP FlowSpec mitigation triggers.
+> All seven core architecture milestones are complete, verified with 98 passing end-to-end tests and active containerized components. Runtime configuration is analyst-tunable (not adaptive ML); changes apply to new detections immediately without a restart. Future roadmap items include kernel-bypass eBPF/XDP hardware filtering and automated BGP FlowSpec mitigation triggers.
 
 ---
 

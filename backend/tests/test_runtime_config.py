@@ -148,6 +148,26 @@ class TestThresholdConfiguration(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(get_threshold("malware", "tls_ports"), [443, 9443])
 
+    def test_reset_endpoint_restores_defaults(self):
+        self.client.put(
+            "/api/config/thresholds",
+            json={"rule": "ddos", "parameter": "sigma_threshold", "value": 4.5},
+        )
+        self.client.put(
+            "/api/config/thresholds",
+            json={"rule": "dns", "parameter": "entropy_threshold", "value": 4.2},
+        )
+        self.assertEqual(get_threshold("ddos", "sigma_threshold"), 4.5)
+
+        response = self.client.post("/api/config/thresholds/reset")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("thresholds", response.json())
+
+        self.assertEqual(get_threshold("ddos", "sigma_threshold"), 3.0)
+        self.assertEqual(get_threshold("dns", "entropy_threshold"), 3.80)
+        body = self.client.get("/api/config/thresholds").json()
+        self.assertFalse(any(entry["modified"] for entry in body["thresholds"]))
+
     def test_reject_invalid_threshold_values(self):
         invalid_payloads = [
             ({"rule": "ddos", "parameter": "sigma_threshold", "value": 99.0}, 400),
@@ -301,6 +321,43 @@ class TestSuppressionRules(unittest.TestCase):
         deleted = self.client.delete(f"/api/config/suppressions/{body['id']}")
         self.assertEqual(deleted.status_code, 200)
         self.assertEqual(self.client.delete(f"/api/config/suppressions/{body['id']}").status_code, 404)
+
+    def test_toggle_rule_through_api(self):
+        created = self.tracked(self.client.post(
+            "/api/config/suppressions",
+            json={"rule_type": "source_ip", "source_ip": "203.0.113.0/24"},
+        ))
+        self.assertEqual(created.status_code, 201)
+        rule_id = created.json()["id"]
+
+        disabled = self.client.patch(
+            f"/api/config/suppressions/{rule_id}",
+            json={"enabled": False},
+        )
+        self.assertEqual(disabled.status_code, 200)
+        self.assertFalse(disabled.json()["enabled"])
+
+        # A disabled rule no longer appears in the active set the pipeline consults
+        active = [r for r in runtime_config.get_suppression_rules() if r.id == rule_id]
+        self.assertEqual(len(active), 1)
+        self.assertFalse(active[0].enabled)
+
+        re_enabled = self.client.patch(
+            f"/api/config/suppressions/{rule_id}",
+            json={"enabled": True, "description": "Re-enabled after review"},
+        )
+        self.assertEqual(re_enabled.status_code, 200)
+        self.assertTrue(re_enabled.json()["enabled"])
+        self.assertEqual(re_enabled.json()["description"], "Re-enabled after review")
+
+        # Unknown ids are a clean 404, and an empty PATCH body changes nothing
+        self.assertEqual(
+            self.client.patch("/api/config/suppressions/missing-id", json={"enabled": True}).status_code,
+            404,
+        )
+        untouched = self.client.patch(f"/api/config/suppressions/{rule_id}", json={})
+        self.assertEqual(untouched.status_code, 200)
+        self.assertTrue(untouched.json()["enabled"])
 
     def test_reject_malformed_ip_and_empty_rules(self):
         malformed = [

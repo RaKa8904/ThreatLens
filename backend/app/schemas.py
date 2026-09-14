@@ -124,6 +124,19 @@ class SuppressionRuleCreate(BaseModel):
         return self
 
 
+class SuppressionRuleUpdate(BaseModel):
+    """Partial update for an existing suppression rule; omitted fields are unchanged."""
+
+    enabled: Optional[bool] = None
+    description: Optional[str] = Field(default=None, max_length=500)
+    expires_at: Optional[datetime] = None
+
+    @field_validator("expires_at")
+    @classmethod
+    def validate_expiry(cls, value: Optional[datetime]) -> Optional[datetime]:
+        return _as_utc(value)
+
+
 class ThresholdEntry(BaseModel):
     """One analyst-configurable detector threshold with its metadata and live value."""
 

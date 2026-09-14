@@ -145,12 +145,3 @@ class DetectionPipeline:
     async def async_process_flow_event(self, event: dict) -> List[ThreatAlertSchema]:
         """Asynchronous wrapper for non-blocking event loop execution."""
         return await asyncio.to_thread(self.process_flow_event, event)
-
-
-# Global Default Pipeline Instance
-default_pipeline = DetectionPipeline()
-
-
-def process_flow_event(event: dict) -> List[ThreatAlertSchema]:
-    """Callable functional entrypoint for single-event pipeline processing."""
-    return default_pipeline.process_flow_event(event)

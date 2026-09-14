@@ -82,7 +82,7 @@ class DNSEngine(BaseDetectionEngine):
         # 1. High-entropy DGA domain (H >= 3.80 bits) or extreme consonant ratio (>= 0.85)
         # 2. Large DNS tunneling query (> 60 characters or TXT payload > 45 chars)
         # 3. Encoded binary tunnel in TXT or NULL records
-        is_high_entropy = max_entropy >= entropy_threshold or (consonant_ratio >= 0.85 and len(subdomain) >= 12)
+        is_high_entropy = max_entropy >= entropy_threshold
         is_tunnel_length = query_len >= tunnel_length_threshold
         is_txt_tunnel = query_type in ["TXT", "NULL"] and (query_len >= txt_tunnel_length or max_entropy >= txt_entropy_threshold)
 

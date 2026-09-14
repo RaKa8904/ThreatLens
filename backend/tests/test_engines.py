@@ -269,6 +269,8 @@ class TestPipelineAndAggregator(unittest.TestCase):
         self.assertEqual(alerts[0].threat_class, ThreatClassEnum.VOLUMETRIC_DOS)
 
     def test_ema_baseline_adaptation_in_ddos_engine(self):
+        # EMA state is currently inert with respect to detection decisions (see
+        # the comment in ddos_engine.py); this test only pins its internal math.
         engine = DDoSEngine(baseline_pps_mean=50.0, baseline_pps_std=10.0)
         initial_mean = engine.baseline_mean
         engine._update_ema_baseline(120.0)
@@ -310,20 +312,32 @@ class TestPipelineAndAggregator(unittest.TestCase):
 
     def test_attack_chain_correlation_bonus(self):
         src_ip = "192.168.1.188"
-        # 1. Recon flow
-        recon = self.generator.generate_recon_scan(scanner_ip=src_ip)
-        self.pipeline.process_flow_event(recon)
+        base_t = 2000.0
+
+        # 1. Recon: a real multi-port scan (5 distinct ports) so the ReconEngine
+        # fires through its cardinality logic, not through simulation labels.
+        for port in [21, 22, 80, 443, 8080]:
+            recon = self.generator.generate_recon_scan(
+                timestamp=base_t,
+                scanner_ip=src_ip,
+                target_ip="10.0.0.99",
+            )
+            recon["dst_port"] = port
+            self.pipeline.process_flow_event(recon)
 
         # 2. C2 flow
         c2 = self.generator.generate_botnet_c2()
         c2["src_ip"] = src_ip
+        c2["timestamp"] = base_t
         c2_alerts = self.pipeline.process_flow_event(c2)
 
         # 3. Exfil flow
         exfil = self.generator.generate_data_exfiltration()
         exfil["src_ip"] = src_ip
+        exfil["timestamp"] = base_t
         exfil_alerts = self.pipeline.process_flow_event(exfil)
 
+        self.assertTrue(exfil_alerts, "Expected exfiltration detection to fire")
         self.assertTrue(any("Attack Chain" in a.evidence.details for a in exfil_alerts))
 
 

@@ -222,6 +222,42 @@ class RuntimeConfigStore:
         )
         return rule
 
+    def update_suppression_rule(
+        self,
+        rule_id: str,
+        *,
+        enabled: Optional[bool] = None,
+        description: Optional[str] = None,
+        expires_at: Optional[datetime] = None,
+    ) -> Optional[SuppressionRule]:
+        """
+        Partially updates a suppression rule (enabled/description/expires_at).
+
+        Returns the updated rule, or None when the id is unknown. A None
+        expires_at argument leaves the existing expiry untouched; pass a
+        datetime to set or replace it.
+        """
+        with self._lock:
+            rule = self._suppressions.get(rule_id)
+            if rule is None:
+                return None
+            updates: Dict[str, Any] = {"updated_at": datetime.now(timezone.utc)}
+            if enabled is not None:
+                updates["enabled"] = enabled
+            if description is not None:
+                updates["description"] = description
+            if expires_at is not None:
+                updates["expires_at"] = expires_at
+            rule = rule.model_copy(update=updates)
+            self._suppressions[rule_id] = rule
+            self._persist_suppression(rule)
+            self._last_refresh = time.time()
+        logger.info(
+            "Suppression rule updated: id=%s enabled=%s expires_at=%s",
+            rule_id, rule.enabled, rule.expires_at,
+        )
+        return rule
+
     def delete_suppression_rule(self, rule_id: str) -> bool:
         with self._lock:
             removed = self._suppressions.pop(rule_id, None)

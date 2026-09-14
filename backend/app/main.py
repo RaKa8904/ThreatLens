@@ -29,6 +29,7 @@ from backend.app.schemas import (
     AlertStatusEnum,
     SuppressionRule,
     SuppressionRuleCreate,
+    SuppressionRuleUpdate,
     ThreatAlertSchema,
     ThreatClassEnum,
     ThresholdConfigResponse,
@@ -138,10 +139,7 @@ async def background_stream_worker(interval_seconds: float = 1.5):
             throughput_state["last_processing_latency_ms"] = round(processing_latency_ms, 3)
 
             # Ingest to ClickHouse and broadcast live to WebSocket clients
-            simulated_confidence = event.get("simulated_confidence")
             for alert in alerts:
-                if simulated_confidence is not None:
-                    alert = alert.model_copy(update={"confidence_score": simulated_confidence})
                 event_ts = event_timestamp_seconds(event)
                 alert = alert.model_copy(update={
                     "ingest_latency_ms": round(max(0.0, time.time() - event_ts) * 1000, 3) if event_ts else None,
@@ -522,6 +520,30 @@ def create_suppression_rule(rule: SuppressionRuleCreate):
         created.enabled, runtime_config.persistent,
     )
     return created
+
+
+@app.patch("/api/config/suppressions/{rule_id}", response_model=SuppressionRule, tags=["Detection Configuration"])
+def update_suppression_rule(rule_id: str, payload: SuppressionRuleUpdate):
+    """
+    Partially updates a suppression rule (enable/disable, description, expiry).
+    """
+    existing = next((r for r in runtime_config.get_suppression_rules() if r.id == rule_id), None)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="Suppression rule not found")
+    updated = runtime_config.update_suppression_rule(
+        rule_id,
+        enabled=payload.enabled,
+        description=payload.description,
+        expires_at=payload.expires_at,
+    )
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Suppression rule not found")
+    logger.info(
+        "AUDIT suppression_updated id=%s enabled=%s->%s expires_at=%s persistent=%s",
+        updated.id, existing.enabled, updated.enabled, updated.expires_at,
+        runtime_config.persistent,
+    )
+    return updated
 
 
 @app.delete("/api/config/suppressions/{rule_id}", tags=["Detection Configuration"])

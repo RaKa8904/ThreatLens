@@ -65,12 +65,10 @@ class ReconEngine(BaseDetectionEngine):
         # 1. Multi-port vertical scan (>= min_target_cardinality unique ports)
         # 2. Multi-host horizontal sweep (>= min_target_cardinality unique IPs)
         # 3. High 10s fan-out with probe profile
-        # 4. Explicit reconnaissance label from synthetic generator
         cardinality = max(unique_ports, unique_ips, fan_out_10s)
         is_cardinality_anomaly = cardinality >= min_target_cardinality and is_probe_profile
-        is_simulated = event.get("simulated_label") == "Reconnaissance Scan"
 
-        if is_cardinality_anomaly or is_simulated:
+        if is_cardinality_anomaly:
             effective_cardinality = max(cardinality, 3)
             base_conf = 0.80
             card_bonus = min(0.18, (effective_cardinality - min_target_cardinality) * 0.03)

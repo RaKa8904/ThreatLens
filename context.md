@@ -107,8 +107,10 @@ Additional functional endpoints:
 - `GET`/`PUT /api/config/thresholds` and `POST /api/config/thresholds/reset`: analyst-tunable
   detector thresholds with live values, valid ranges, and the engine consuming each parameter.
 - `GET /api/export/iocs?window_minutes=X&format=json|csv`: opt-in IOC export.
-- `GET`/`POST /api/config/suppressions` and `DELETE /api/config/suppressions/{id}`: suppression
-  rule CRUD. Matching detections are still evaluated and persisted; only analyst delivery is withheld.
+- `GET`/`POST /api/config/suppressions`, `PATCH /api/config/suppressions/{id}`, and
+  `DELETE /api/config/suppressions/{id}`: suppression rule CRUD and partial updates
+  (enable/disable, description, expiry). Matching detections are still evaluated and
+  persisted; only analyst delivery is withheld.
 - `POST /api/replay/start` and `GET /api/replay/status`: isolated PCAP replay control.
 
 Alert lifecycle values are `new`, `acknowledged`, `investigating`, `resolved`, and
@@ -122,14 +124,21 @@ detection without restarting any process. Overrides and suppression rules are pe
 when it is reachable; `GET /api/config/thresholds` reports `persistent: false` and
 `storage_mode: "memory"` when they are runtime-only and will be lost on restart.
 
+Propagation semantics are process-scoped: the API and the detection pipeline (synthetic worker
+and Kafka consumer alike) run inside the same backend process and share one store, so threshold
+and suppression changes are immediate there. Suppression rules are additionally refreshed from
+Redis at most every 5 seconds, so a *separate* process holding its own store would pick up rule
+changes within that delay — but threshold overrides are only re-read from Redis at startup, so
+a hypothetical split-out worker process would need a restart to see threshold changes.
+
 Replay isolation uses a separate in-memory `DetectionPipeline` and temporary Zeek
 log directory. Replayed alerts are archived with `source="replay"` and are not
 broadcast to live WebSocket clients. A future implementation can move replay data
 to a separate archive table if operational volume requires it.
 
 Detector thresholds live in `engine/config.py` and are populated from named
-environment variables. Detection algorithms are unchanged; `/api/config/thresholds`
-exposes the effective read-only values.
+environment variables. `/api/config/thresholds` exposes the effective live values,
+which analysts can update at runtime; detection algorithms are otherwise unchanged.
 
 Suppressed alerts remain auditable in storage with `suppressed=true`, but are not
 broadcast by either the FastAPI background worker or Kafka consumer.

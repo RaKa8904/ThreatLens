@@ -58,6 +58,7 @@ export function DetectionConfig({ open, onOpenChange }: DetectionConfigProps) {
     description: "",
     threat_class: null,
     enabled: true,
+    expires_at: null,
   });
   const [addError, setAddError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
@@ -150,6 +151,7 @@ export function DetectionConfig({ open, onOpenChange }: DetectionConfigProps) {
       destination_ip: draft.destination_ip?.trim() ? draft.destination_ip.trim() : null,
       threat_class: draft.rule_type === "source_ip_threat_class" ? draft.threat_class : null,
       enabled: draft.enabled,
+      expires_at: draft.expires_at ? new Date(draft.expires_at).toISOString() : null,
     };
     try {
       const response = await fetch("/api/config/suppressions", {
@@ -171,6 +173,7 @@ export function DetectionConfig({ open, onOpenChange }: DetectionConfigProps) {
         description: "",
         threat_class: null,
         enabled: true,
+        expires_at: null,
       });
       await loadRules();
     } catch (error) {
@@ -190,6 +193,21 @@ export function DetectionConfig({ open, onOpenChange }: DetectionConfigProps) {
       await loadRules();
     } catch (error) {
       setRulesError(error instanceof Error ? error.message : "delete failed");
+    }
+  };
+
+  const toggleRule = async (rule: SuppressionRule) => {
+    setRulesError(null);
+    try {
+      const response = await fetch(`/api/config/suppressions/${encodeURIComponent(rule.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: !rule.enabled }),
+      });
+      if (!response.ok) throw new Error(`update failed (${response.status})`);
+      await loadRules();
+    } catch (error) {
+      setRulesError(error instanceof Error ? error.message : "update failed");
     }
   };
 
@@ -387,6 +405,16 @@ export function DetectionConfig({ open, onOpenChange }: DetectionConfigProps) {
                   />
                   Enabled
                 </label>
+                <input
+                  type="datetime-local"
+                  aria-label="Expiration (optional)"
+                  value={draft.expires_at ?? ""}
+                  onChange={(event) =>
+                    setDraft((current) => ({ ...current, expires_at: event.target.value || null }))
+                  }
+                  className="h-7 rounded border border-slate-800 bg-slate-950/70 px-2 font-mono text-xs text-slate-100 focus:border-cyan-500/60 focus:outline-none"
+                  title="Optional: rule stops suppressing after this time"
+                />
                 <Button size="sm" disabled={adding} onClick={() => void addRule()}>
                   {adding ? "Adding..." : "Add Rule"}
                 </Button>
@@ -424,11 +452,21 @@ export function DetectionConfig({ open, onOpenChange }: DetectionConfigProps) {
                     )}
                     <p className="mt-1 font-mono text-[10px] text-slate-600">
                       {rule.id} · added {rule.created_at}
+                      {rule.expires_at ? ` · expires ${rule.expires_at}` : ""}
                     </p>
                   </div>
-                  <Button size="sm" variant="subtle" onClick={() => void deleteRule(rule.id)}>
-                    Delete
-                  </Button>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="subtle"
+                      onClick={() => void toggleRule(rule)}
+                    >
+                      {rule.enabled ? "Disable" : "Enable"}
+                    </Button>
+                    <Button size="sm" variant="subtle" onClick={() => void deleteRule(rule.id)}>
+                      Delete
+                    </Button>
+                  </div>
                 </div>
               ))}
             </div>
