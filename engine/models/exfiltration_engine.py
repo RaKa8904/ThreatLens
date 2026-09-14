@@ -10,6 +10,7 @@ from typing import Optional
 from backend.app.schemas import ThreatClassEnum
 from engine.features.metrics import calculate_flow_ratio
 from engine.models.base import BaseDetectionEngine, DetectionCandidate
+from engine.config import THRESHOLDS
 
 
 class ExfiltrationEngine(BaseDetectionEngine):
@@ -20,11 +21,12 @@ class ExfiltrationEngine(BaseDetectionEngine):
 
     def __init__(
         self,
-        min_egress_bytes: int = 1_000_000,   # 1 MB threshold for high-volume inspection
-        min_ratio_threshold: float = 20.0,   # 20x outbound asymmetry
+        min_egress_bytes: Optional[int] = None,
+        min_ratio_threshold: Optional[float] = None,
     ):
-        self.min_egress_bytes = min_egress_bytes
-        self.min_ratio_threshold = min_ratio_threshold
+        config = THRESHOLDS["exfiltration"]
+        self.min_egress_bytes = min_egress_bytes if min_egress_bytes is not None else config["min_egress_bytes"]
+        self.min_ratio_threshold = min_ratio_threshold if min_ratio_threshold is not None else config["min_ratio_threshold"]
 
     @property
     def threat_class(self) -> ThreatClassEnum:
@@ -50,7 +52,7 @@ class ExfiltrationEngine(BaseDetectionEngine):
         # 2. Massive single flow upload (>= 5MB)
         # 3. Explicit Data Exfiltration simulation
         is_asymmetric_leak = total_out >= self.min_egress_bytes and flow_ratio >= self.min_ratio_threshold
-        is_massive_upload = total_out >= 5_000_000 and flow_ratio >= 10.0
+        is_massive_upload = total_out >= THRESHOLDS["exfiltration"]["massive_upload_bytes"] and flow_ratio >= THRESHOLDS["exfiltration"]["massive_upload_ratio"]
         is_simulated = (
             event.get("simulated_label") == "Data Exfiltration"
             and bytes_out >= 500_000

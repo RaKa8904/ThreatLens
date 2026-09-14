@@ -47,6 +47,7 @@ class DetectionCandidate:
     unique_destination_ports: Optional[int] = None
     window_10s_fan_out: Optional[int] = None
     window_60s_fan_out: Optional[int] = None
+    unique_source_count: Optional[int] = None
     total_uploaded_bytes: Optional[int] = None
 
     def to_evidence(self) -> EvidenceSchema:
@@ -75,6 +76,7 @@ class DetectionCandidate:
             unique_destination_ports=self.unique_destination_ports,
             window_10s_fan_out=self.window_10s_fan_out,
             window_60s_fan_out=self.window_60s_fan_out,
+            unique_source_count=self.unique_source_count,
             total_uploaded_bytes=self.total_uploaded_bytes,
             details=self.details,
             inbound_connections=self.inbound_connections,

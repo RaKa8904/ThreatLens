@@ -15,6 +15,7 @@ from engine.features.metrics import (
     calculate_shannon_entropy,
 )
 from engine.models.base import BaseDetectionEngine, DetectionCandidate
+from engine.config import THRESHOLDS
 
 
 class BeaconingEngine(BaseDetectionEngine):
@@ -25,13 +26,14 @@ class BeaconingEngine(BaseDetectionEngine):
 
     def __init__(
         self,
-        max_variance_threshold: float = 0.05,
-        min_heartbeats: int = 3,
-        min_period_seconds: float = 1.0,
+        max_variance_threshold: Optional[float] = None,
+        min_heartbeats: Optional[int] = None,
+        min_period_seconds: Optional[float] = None,
     ):
-        self.max_variance_threshold = max_variance_threshold
-        self.min_heartbeats = min_heartbeats
-        self.min_period_seconds = min_period_seconds
+        config = THRESHOLDS["beaconing"]
+        self.max_variance_threshold = max_variance_threshold if max_variance_threshold is not None else config["max_variance_threshold"]
+        self.min_heartbeats = min_heartbeats if min_heartbeats is not None else config["min_heartbeats"]
+        self.min_period_seconds = min_period_seconds if min_period_seconds is not None else config["min_period_seconds"]
 
     @property
     def threat_class(self) -> ThreatClassEnum:

@@ -8,6 +8,8 @@ performs multi-signal confidence scoring, and produces validated ThreatAlertSche
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import logging
+import threading
+import uuid
 from typing import List, Optional
 
 from backend.app.schemas import EvidenceSchema, ThreatAlertSchema
@@ -18,6 +20,7 @@ from engine.models.dns_engine import DNSEngine
 from engine.models.exfiltration_engine import ExfiltrationEngine
 from engine.models.malware_engine import EncryptedMalwareEngine
 from engine.models.recon_engine import ReconEngine
+from engine.config import THRESHOLDS
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +43,25 @@ class AlertAggregator:
                 ExfiltrationEngine(),
             ]
         self.max_workers = max_workers
+        self.correlation_window_seconds = THRESHOLDS["correlation"]["window_seconds"]
+        self._source_incidents: dict[str, tuple[float, str]] = {}
+        self._correlation_lock = threading.Lock()
+
+    def _incident_id_for_source(self, source_ip: Optional[str], timestamp: float) -> Optional[str]:
+        if not source_ip:
+            return None
+        with self._correlation_lock:
+            previous = self._source_incidents.get(source_ip)
+            if previous and timestamp - previous[0] <= self.correlation_window_seconds:
+                incident_id = previous[1]
+            else:
+                incident_id = str(uuid.uuid4())
+            self._source_incidents[source_ip] = (timestamp, incident_id)
+            cutoff = timestamp - self.correlation_window_seconds
+            self._source_incidents = {
+                key: value for key, value in self._source_incidents.items() if value[0] >= cutoff
+            }
+            return incident_id
 
     def _evaluate_single_engine(
         self,
@@ -108,6 +130,7 @@ class AlertAggregator:
         corroboration_bonus = 0.03 if len(candidates) > 1 else 0.0
 
         alerts: List[ThreatAlertSchema] = []
+        incident_id = self._incident_id_for_source(event.get("src_ip"), alert_time.timestamp())
         for candidate in candidates:
             # Normalize and clamp confidence score into [0.00, 1.00]
             final_conf = min(1.0, max(0.0, candidate.confidence_score + corroboration_bonus))
@@ -130,6 +153,13 @@ class AlertAggregator:
                 "dns_query": event.get("dns_query"),
                 "dns_query_length": len(event["dns_query"]) if event.get("dns_query") else None,
                 "dns_query_type": event.get("dns_query_type"),
+                "detectors_fired": [item.threat_class.value for item in candidates],
+                "detector_count": len(candidates),
+                "confidence_basis": (
+                    f"{len(candidates)} detectors corroborated; +{corroboration_bonus:.2f} bonus"
+                    if len(candidates) > 1
+                    else "Single detector result; no corroboration bonus"
+                ),
             })
             alert = ThreatAlertSchema(
                 timestamp=alert_time,
@@ -141,6 +171,8 @@ class AlertAggregator:
                 protocol=event.get("protocol"),
                 threat_class=candidate.threat_class,
                 confidence_score=normalized_score,
+                incident_id=incident_id,
+                source=event.get("source", "live"),
                 evidence=evidence,
             )
             alerts.append(alert)

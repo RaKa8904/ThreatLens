@@ -20,7 +20,7 @@ os.environ["ENABLE_BACKGROUND_GENERATOR"] = "false"
 from fastapi.testclient import TestClient
 
 from backend.app.main import alert_store, app, ws_manager
-from backend.app.schemas import EvidenceSchema, ThreatAlertSchema, ThreatClassEnum
+from backend.app.schemas import AlertStatusEnum, EvidenceSchema, ThreatAlertSchema, ThreatClassEnum
 
 
 class TestFastAPIGateway(unittest.TestCase):
@@ -103,6 +103,52 @@ class TestFastAPIGateway(unittest.TestCase):
         for a in alerts:
             self.assertEqual(a["threat_class"], ThreatClassEnum.BOTNET_C2.value)
 
+    def test_alert_status_update_and_filter(self):
+        flow_id = self.sample_alert_1.flow_id
+        response = self.client.patch(f"/api/alerts/{flow_id}/status?status={AlertStatusEnum.ACKNOWLEDGED.value}")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], AlertStatusEnum.ACKNOWLEDGED.value)
+
+        filtered = self.client.get(f"/api/alerts?status={AlertStatusEnum.ACKNOWLEDGED.value}")
+        self.assertEqual(filtered.status_code, 200)
+        self.assertTrue(any(alert["flow_id"] == flow_id for alert in filtered.json()))
+
+    def test_alert_notes_create_and_list(self):
+        flow_id = self.sample_alert_1.flow_id
+        created = self.client.post(f"/api/alerts/{flow_id}/notes", json={"text": "Review SYN pattern with SOC."})
+        self.assertEqual(created.status_code, 200)
+        self.assertEqual(created.json()["flow_id"], flow_id)
+        listed = self.client.get(f"/api/alerts/{flow_id}/notes")
+        self.assertEqual(listed.status_code, 200)
+        self.assertTrue(any(note["text"] == "Review SYN pattern with SOC." for note in listed.json()))
+
+    def test_thresholds_health_ioc_and_suppression_endpoints(self):
+        thresholds = self.client.get("/api/config/thresholds")
+        self.assertEqual(thresholds.status_code, 200)
+        self.assertIn("ddos", thresholds.json())
+
+        health = self.client.get("/api/health").json()
+        self.assertIn(health["redis_status"], ["connected", "fallback_memory"])
+        self.assertIn(health["clickhouse_status"], ["connected", "fallback_memory"])
+
+        rule = self.client.post("/api/suppression-rules", json={"rule_type": "source_ip", "source_ip": "192.168.1.0/24"})
+        self.assertEqual(rule.status_code, 200)
+        rule_id = rule.json()["id"]
+        listed = self.client.get("/api/suppression-rules")
+        self.assertTrue(any(item["id"] == rule_id for item in listed.json()))
+        deleted = self.client.delete(f"/api/suppression-rules/{rule_id}")
+        self.assertEqual(deleted.status_code, 200)
+
+        export = self.client.get("/api/export/iocs?window_minutes=60&format=json")
+        self.assertEqual(export.status_code, 200)
+        self.assertIn("indicators", export.json())
+
+    def test_incidents_and_replay_validation_endpoints(self):
+        incidents = self.client.get("/api/incidents")
+        self.assertEqual(incidents.status_code, 200)
+        replay = self.client.post("/api/replay/start", json={"pcap_path": "missing.pcap"})
+        self.assertEqual(replay.status_code, 400)
+
     def test_metrics_throughput_endpoint(self):
         response = self.client.get("/api/metrics/throughput")
         self.assertEqual(response.status_code, 200)
@@ -112,6 +158,20 @@ class TestFastAPIGateway(unittest.TestCase):
         self.assertIn("packets_per_sec", data)
         self.assertIn("bytes_per_sec", data)
         self.assertIn("total_alerts", data)
+
+    def test_alert_trends_include_recent_alerts(self):
+        response = self.client.get("/api/analytics/trends?window_minutes=60&bucket_minutes=5")
+        self.assertEqual(response.status_code, 200)
+
+        data = response.json()
+        self.assertEqual(data["bucket_minutes"], 5)
+        self.assertEqual(len(data["points"]), 13)
+        self.assertIn("Volumetric & Protocol DDoS", data["threat_classes"])
+        total_alerts = sum(
+            sum(point["counts"].values())
+            for point in data["points"]
+        )
+        self.assertGreaterEqual(total_alerts, 2)
 
     def test_websocket_threat_stream(self):
         with self.client.websocket_connect("/ws/threats") as websocket:

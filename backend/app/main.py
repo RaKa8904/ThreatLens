@@ -6,17 +6,23 @@ and background pipeline execution.
 """
 
 import asyncio
+import csv
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from io import StringIO
+from pathlib import Path
+import subprocess
+import tempfile
 import logging
 import os
+import queue
 import time
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Query, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.app.schemas import ThreatAlertSchema, ThreatClassEnum
+from backend.app.schemas import AnalystNoteCreate, AnalystNoteSchema, AlertStatusEnum, SuppressionRule, SuppressionRuleCreate, ThreatAlertSchema, ThreatClassEnum
 from backend.app.storage import ClickHouseAlertStore
 from backend.app.websocket_manager import ConnectionManager
 from engine.features.store import SlidingWindowStore
@@ -24,6 +30,8 @@ from engine.kafka_consumer import KafkaIngestConsumer
 from engine.models.aggregator import AlertAggregator
 from engine.pipeline import DetectionPipeline
 from ingest.producers.mock_producer import SyntheticFlowGenerator
+from ingest.producers.zeek_kafka_shipper import ZeekLogShipper
+from engine.config import THRESHOLDS
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -33,8 +41,9 @@ ws_manager = ConnectionManager()
 alert_store = ClickHouseAlertStore(auto_connect=True)
 window_store = SlidingWindowStore(use_redis=True)
 alert_aggregator = AlertAggregator()
-pipeline = DetectionPipeline(store=window_store, aggregator=alert_aggregator)
+pipeline = DetectionPipeline(store=window_store, aggregator=alert_aggregator, suppression_provider=alert_store)
 flow_generator = SyntheticFlowGenerator(seed=int(time.time()))
+replay_state: Dict[str, Any] = {"status": "idle", "path": None, "processed_alerts": 0, "error": None}
 
 # Live throughput counters
 throughput_state = {
@@ -66,6 +75,29 @@ def event_timestamp_seconds(payload: Dict[str, Any]) -> Optional[float]:
         except ValueError:
             return None
     return None
+
+
+def run_replay(pcap_path: str) -> None:
+    replay_state.update({"status": "running", "path": pcap_path, "processed_alerts": 0, "error": None})
+    try:
+        with tempfile.TemporaryDirectory(prefix="threatlens-replay-") as log_dir:
+            subprocess.run(
+                ["docker", "compose", "run", "--rm", "-e", "MODE=replay", "-e", "PCAP_DIR=/replay", "-e", "LOG_DIR=/replay-logs", "-v", f"{Path(pcap_path).parent.resolve()}:/replay:ro", "-v", f"{Path(log_dir).resolve()}:/replay-logs", "zeek"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            replay_pipeline = DetectionPipeline(store=SlidingWindowStore(use_redis=False), aggregator=AlertAggregator())
+            shipper = ZeekLogShipper(log_dir=log_dir, event_queue=queue.Queue())
+            for log_name in ["dns", "ssl", "conn"]:
+                for event in shipper.process_log_file(log_name, str(Path(log_dir) / f"{log_name}.log")):
+                    event["source"] = "replay"
+                    for alert in replay_pipeline.process_flow_event(event):
+                        alert_store.insert_alert(alert)
+                        replay_state["processed_alerts"] += 1
+        replay_state["status"] = "completed"
+    except Exception as exc:
+        replay_state.update({"status": "failed", "error": str(exc)})
 
 
 async def background_stream_worker(interval_seconds: float = 1.5):
@@ -101,7 +133,8 @@ async def background_stream_worker(interval_seconds: float = 1.5):
                     "processing_latency_ms": round(processing_latency_ms, 3),
                 })
                 alert_store.insert_alert(alert)
-                await ws_manager.broadcast(alert)
+                if not alert.suppressed:
+                    await ws_manager.broadcast(alert)
                 throughput_state["last_delivery_latency_ms"] = round(max(0.0, time.time() - alert.timestamp.timestamp()) * 1000, 3)
 
             flow_rate = max(float(os.getenv("SIMULATION_FLOWS_PER_SECOND", "10")), 0.1)
@@ -180,15 +213,19 @@ def get_system_health():
     """
     return {
         "status": "healthy",
+        "redis_status": "connected" if window_store.is_redis_connected else "fallback_memory",
+        "clickhouse_status": "connected" if alert_store.is_connected else "fallback_memory",
         "ingest_source": os.getenv("INGEST_SOURCE", "synthetic").lower(),
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "services": {
             "redis": {
                 "connected": window_store.is_redis_connected,
+                "fallback_active": window_store.fallback_active,
                 "mode": "redis-cluster" if window_store.is_redis_connected else "in-memory-fallback",
             },
             "clickhouse": {
                 "connected": alert_store.is_connected,
+                "fallback_active": alert_store.fallback_active,
                 "mode": "clickhouse-olap" if alert_store.is_connected else "in-memory-ring-fallback",
             },
             "pipeline": {
@@ -222,12 +259,33 @@ def get_historical_alerts(
     limit: int = Query(50, ge=1, le=500, description="Max alerts to retrieve"),
     offset: int = Query(0, ge=0, description="Pagination offset"),
     threat_class: Optional[str] = Query(None, description="Optional ThreatClassEnum filter"),
+    status: Optional[AlertStatusEnum] = Query(None, description="Optional alert lifecycle status filter"),
 ):
     """
     Retrieves recent threat alerts from ClickHouse or in-memory fallback archive with filtering.
     """
-    alerts = alert_store.get_recent_alerts(limit=limit + offset, threat_class=threat_class)
+    alerts = alert_store.get_recent_alerts(limit=limit + offset, threat_class=threat_class, status=status.value if status else None)
     return alerts[offset : offset + limit]
+
+
+@app.patch("/api/alerts/{flow_id:path}/status", response_model=ThreatAlertSchema, tags=["Alerts"])
+def update_alert_status(flow_id: str, status: AlertStatusEnum):
+    """Updates post-creation workflow status for an alert flow."""
+    updated = alert_store.update_alert_status(flow_id, status)
+    if updated is None:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Alert flow not found")
+    return updated
+
+
+@app.post("/api/alerts/{flow_id:path}/notes", response_model=AnalystNoteSchema, tags=["Alerts"])
+def add_alert_note(flow_id: str, note: AnalystNoteCreate):
+    return alert_store.add_note(AnalystNoteSchema(flow_id=flow_id, text=note.text))
+
+
+@app.get("/api/alerts/{flow_id:path}/notes", response_model=List[AnalystNoteSchema], tags=["Alerts"])
+def get_alert_notes(flow_id: str):
+    return alert_store.get_notes(flow_id)
 
 
 @app.get("/api/metrics/throughput", response_model=Dict[str, Any], tags=["Metrics"])
@@ -257,6 +315,86 @@ def get_network_throughput():
     }
 
 
+@app.get("/api/incidents", response_model=List[Dict[str, Any]], tags=["Incidents"])
+def get_incidents(limit: int = Query(100, ge=1, le=500)):
+    """Returns recent source-correlated incidents with constituent alert records."""
+    grouped: Dict[str, Dict[str, Any]] = {}
+    for alert in alert_store.get_recent_alerts(limit=limit):
+        if not alert.incident_id:
+            continue
+        incident = grouped.setdefault(alert.incident_id, {
+            "incident_id": alert.incident_id,
+            "source_ip": alert.source_ip or alert.evidence.source_ip,
+            "first_seen": alert.timestamp,
+            "last_seen": alert.timestamp,
+            "threat_classes": [],
+            "alerts": [],
+        })
+        incident["first_seen"] = min(incident["first_seen"], alert.timestamp)
+        incident["last_seen"] = max(incident["last_seen"], alert.timestamp)
+        threat_class = alert.threat_class.value if isinstance(alert.threat_class, ThreatClassEnum) else str(alert.threat_class)
+        if threat_class not in incident["threat_classes"]:
+            incident["threat_classes"].append(threat_class)
+        incident["alerts"].append(alert.model_dump(mode="json"))
+    return sorted(grouped.values(), key=lambda item: item["last_seen"], reverse=True)[:limit]
+
+
+@app.get("/api/config/thresholds", response_model=Dict[str, Any], tags=["System"])
+def get_detection_thresholds():
+    """Returns the read-only environment-backed detector threshold configuration."""
+    return THRESHOLDS
+
+
+@app.get("/api/export/iocs", tags=["Export"])
+def export_iocs(
+    window_minutes: int = Query(60, ge=1, le=10080),
+    format: str = Query("json", pattern="^(json|csv)$"),
+):
+    """Exports source IPs, DGA domains, and malware JA3/JA4 indicators."""
+    cutoff = datetime.now(timezone.utc).timestamp() - window_minutes * 60
+    indicators: List[Dict[str, Any]] = []
+    for alert in alert_store.get_recent_alerts(limit=500):
+        timestamp = alert.timestamp if alert.timestamp.tzinfo else alert.timestamp.replace(tzinfo=timezone.utc)
+        if timestamp.timestamp() < cutoff:
+            continue
+        evidence = alert.evidence
+        source_ip = alert.source_ip or evidence.source_ip
+        if source_ip:
+            indicators.append({"type": "source_ip", "value": source_ip, "threat_class": alert.threat_class.value, "timestamp": timestamp.isoformat()})
+        if alert.threat_class == ThreatClassEnum.DGA_DNS and evidence.dns_query:
+            indicators.append({"type": "dns_domain", "value": evidence.dns_query, "threat_class": alert.threat_class.value, "timestamp": timestamp.isoformat()})
+        if alert.threat_class == ThreatClassEnum.ENCRYPTED_MALWARE:
+            for indicator_type, value in (("ja3", evidence.ja3_hash), ("ja4", evidence.ja4_hash)):
+                if value:
+                    indicators.append({"type": indicator_type, "value": value, "threat_class": alert.threat_class.value, "timestamp": timestamp.isoformat()})
+    if format == "csv":
+        output = StringIO()
+        writer = csv.DictWriter(output, fieldnames=["type", "value", "threat_class", "timestamp"])
+        writer.writeheader()
+        writer.writerows(indicators)
+        return Response(content=output.getvalue(), media_type="text/csv", headers={"Content-Disposition": "attachment; filename=threatlens-iocs.csv"})
+    return {"window_minutes": window_minutes, "indicators": indicators}
+
+
+@app.post("/api/replay/start", response_model=Dict[str, Any], tags=["Replay"])
+async def start_replay(payload: Dict[str, str]):
+    """Starts an isolated PCAP replay; replay alerts are tagged and not broadcast."""
+    pcap_path = payload.get("pcap_path", "")
+    if not pcap_path or not Path(pcap_path).is_file():
+        from fastapi import HTTPException
+        raise HTTPException(status_code=400, detail="pcap_path must reference an existing file")
+    if replay_state["status"] == "running":
+        from fastapi import HTTPException
+        raise HTTPException(status_code=409, detail="Replay already running")
+    asyncio.create_task(asyncio.to_thread(run_replay, pcap_path))
+    return {"status": "started", "pcap_path": pcap_path, "source": "replay"}
+
+
+@app.get("/api/replay/status", response_model=Dict[str, Any], tags=["Replay"])
+def get_replay_status():
+    return replay_state
+
+
 @app.get("/api/analytics/trends", response_model=Dict[str, Any], tags=["Analytics"])
 def get_alert_trends(
     window_minutes: int = Query(60, ge=5, le=1440),
@@ -265,12 +403,15 @@ def get_alert_trends(
     """Returns selectable time-bucketed alert counts for all six threat vectors."""
     alerts = alert_store.get_recent_alerts(limit=500)
     now = datetime.now(timezone.utc).timestamp()
-    start = now - window_minutes * 60
     classes = [c.value for c in ThreatClassEnum]
     bucket_seconds = bucket_minutes * 60
+    start = (now - window_minutes * 60) // bucket_seconds * bucket_seconds
     buckets: Dict[int, Dict[str, int]] = {}
     for alert in alerts:
-        timestamp = alert.timestamp.timestamp()
+        alert_timestamp = alert.timestamp
+        if alert_timestamp.tzinfo is None:
+            alert_timestamp = alert_timestamp.replace(tzinfo=timezone.utc)
+        timestamp = alert_timestamp.astimezone(timezone.utc).timestamp()
         if timestamp < start:
             continue
         bucket = int((timestamp - start) // bucket_seconds)
@@ -280,7 +421,7 @@ def get_alert_trends(
             counts[threat_class] += 1
 
     points = []
-    bucket_count = max(1, (window_minutes + bucket_minutes - 1) // bucket_minutes)
+    bucket_count = max(1, int(window_minutes * 60 // bucket_seconds) + 1)
     for bucket in range(bucket_count):
         bucket_start = start + bucket * bucket_seconds
         points.append({
@@ -293,6 +434,25 @@ def get_alert_trends(
         "threat_classes": classes,
         "points": points,
     }
+
+
+@app.post("/api/suppression-rules", response_model=SuppressionRule, tags=["Suppression"])
+def create_suppression_rule(rule: SuppressionRuleCreate):
+    import uuid
+    return alert_store.create_suppression_rule(SuppressionRule(id=str(uuid.uuid4()), **rule.model_dump()))
+
+
+@app.get("/api/suppression-rules", response_model=List[SuppressionRule], tags=["Suppression"])
+def list_suppression_rules():
+    return alert_store.get_suppression_rules()
+
+
+@app.delete("/api/suppression-rules/{rule_id}", tags=["Suppression"])
+def delete_suppression_rule(rule_id: str):
+    from fastapi import HTTPException
+    if not alert_store.delete_suppression_rule(rule_id):
+        raise HTTPException(status_code=404, detail="Suppression rule not found")
+    return {"deleted": True, "id": rule_id}
 
 
 # =============================================================================

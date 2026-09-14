@@ -6,6 +6,8 @@ events across all specialized detection models, and outputs standardized ThreatA
 """
 
 import asyncio
+from datetime import datetime, timezone
+import ipaddress
 import time
 from typing import List, Optional
 
@@ -24,9 +26,35 @@ class DetectionPipeline:
         self,
         store: Optional[SlidingWindowStore] = None,
         aggregator: Optional[AlertAggregator] = None,
+        suppression_provider=None,
     ):
         self.store = store if store is not None else SlidingWindowStore(use_redis=True)
         self.aggregator = aggregator if aggregator is not None else AlertAggregator()
+        self.suppression_provider = suppression_provider
+
+    @staticmethod
+    def _ip_matches(value: str, criterion: str) -> bool:
+        try:
+            return ipaddress.ip_address(value) in ipaddress.ip_network(criterion, strict=False)
+        except ValueError:
+            return value == criterion
+
+    def _is_suppressed(self, alert: ThreatAlertSchema) -> bool:
+        if self.suppression_provider is None:
+            return False
+        for rule in self.suppression_provider.get_active_suppression_rules():
+            if rule.expires_at and rule.expires_at <= datetime.now(timezone.utc):
+                continue
+            source_match = bool(alert.source_ip and rule.source_ip and self._ip_matches(alert.source_ip, rule.source_ip))
+            destination_match = bool(alert.destination_ip and rule.destination_ip and self._ip_matches(alert.destination_ip, rule.destination_ip))
+            class_match = not rule.threat_class or alert.threat_class == rule.threat_class
+            if rule.rule_type == "source_ip" and source_match:
+                return True
+            if rule.rule_type == "destination_ip" and destination_match:
+                return True
+            if rule.rule_type == "source_ip_threat_class" and source_match and class_match:
+                return True
+        return False
 
     def ingest_to_store(self, event: dict) -> None:
         """Updates rolling sliding windows with current flow event telemetry."""
@@ -51,6 +79,7 @@ class DetectionPipeline:
             dst_endpoint=f"{dst_ip}:{dst_port}",
             is_syn=is_syn,
             byte_count=bytes_out,
+            target_key=f"target:{dst_ip}:{dst_port}",
         )
 
         # 2. Update 60s DNS window (if DNS telemetry present)
@@ -90,7 +119,7 @@ class DetectionPipeline:
         # Step 2: Evaluate detection engines via AlertAggregator
         alerts = self.aggregator.aggregate(event, self.store)
 
-        return alerts
+        return [alert.model_copy(update={"suppressed": self._is_suppressed(alert)}) for alert in alerts]
 
     async def async_process_flow_event(self, event: dict) -> List[ThreatAlertSchema]:
         """Asynchronous wrapper for non-blocking event loop execution."""

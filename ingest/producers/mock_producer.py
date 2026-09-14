@@ -72,6 +72,22 @@ class SyntheticFlowGenerator:
         if seed is not None:
             random.seed(seed)
         self._beacon_state: Dict[str, float] = {}
+        self._threat_bag: List[Callable[[], Dict[str, Any]]] = []
+        self._distributed_ddos_queue: List[Dict[str, Any]] = []
+
+    def _next_threat_generator(self) -> Callable[[], Dict[str, Any]]:
+        """Return a randomized threat generator without repeating a vector until the bag is exhausted."""
+        if not self._threat_bag:
+            self._threat_bag = [
+                self.generate_simulated_ddos,
+                self.generate_botnet_c2,
+                self.generate_dga_dns_tunnel,
+                self.generate_encrypted_malware,
+                self.generate_recon_scan,
+                self.generate_data_exfiltration,
+            ]
+            random.shuffle(self._threat_bag)
+        return self._threat_bag.pop()
 
     def _random_internal_ip(self) -> str:
         subnet = random.choice(["10.24", "10.42", "172.20", "192.168.40"])
@@ -128,7 +144,7 @@ class SyntheticFlowGenerator:
         target_ip: str = "10.24.8.10",
         target_port: int = 80,
     ) -> Dict[str, Any]:
-        """Simulates high-velocity SYN flood volumetric attack against a victim host."""
+        """Simulates a single-source high-velocity DoS against a victim host."""
         ts = timestamp if timestamp is not None else time.time()
         src_ip = self._random_external_ip()
         src_port = random.randint(1024, 65535)
@@ -144,13 +160,73 @@ class SyntheticFlowGenerator:
             "flags": ["SYN"],
             "bytes_out": random.randint(40, 64),
             "bytes_in": 0,
-            "packets_out": random.randint(500, 2000),
-            "packets_in": 0,
+            "packets_out": random.randint(0, 4),
+            "packets_in": random.randint(500, 2000),
+            "dns_query": None,
+            "dns_query_type": None,
+            "ja3_hash": None,
+            "simulated_label": "Protocol DoS",
+            "attack_type": "single-source-dos",
+        }
+
+    def generate_simulated_ddos(self) -> Dict[str, Any]:
+        """Start either a single-source DoS or a multi-source DDoS burst."""
+        if random.random() < 0.5:
+            burst = self.generate_distributed_ddos_batch(source_count=random.randint(4, 8))
+            self._distributed_ddos_queue.extend(burst[1:])
+            return burst[0]
+        return self.generate_volumetric_ddos()
+
+    def generate_distributed_ddos(
+        self,
+        timestamp: Optional[float] = None,
+        target_ip: str = "10.24.8.10",
+        target_port: int = 80,
+        source_ip: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Simulates one source in a distributed inbound SYN flood."""
+        ts = timestamp if timestamp is not None else time.time()
+        attacker_ip = source_ip or self._random_external_ip()
+        src_port = random.randint(1024, 65535)
+        return {
+            "timestamp": ts,
+            "flow_id": f"{attacker_ip}:{src_port}->{target_ip}:{target_port}",
+            "src_ip": attacker_ip,
+            "src_port": src_port,
+            "dst_ip": target_ip,
+            "dst_port": target_port,
+            "protocol": "TCP",
+            "flags": ["SYN"],
+            "bytes_out": random.randint(40, 64),
+            "bytes_in": 0,
+            "packets_out": random.randint(0, 4),
+            "packets_in": random.randint(500, 2000),
             "dns_query": None,
             "dns_query_type": None,
             "ja3_hash": None,
             "simulated_label": "Volumetric & Protocol DDoS",
+            "attack_type": "distributed-ddos",
         }
+
+    def generate_distributed_ddos_batch(
+        self,
+        source_count: int = 8,
+        timestamp: Optional[float] = None,
+        target_ip: str = "10.24.8.10",
+        target_port: int = 80,
+    ) -> List[Dict[str, Any]]:
+        """Generates coordinated attack flows from multiple sources to one target."""
+        base_timestamp = timestamp if timestamp is not None else time.time()
+        sources = [f"203.0.113.{index + 1}" for index in range(max(2, source_count))]
+        return [
+            self.generate_distributed_ddos(
+                timestamp=base_timestamp + index * 0.01,
+                target_ip=target_ip,
+                target_port=target_port,
+                source_ip=source_ip,
+            )
+            for index, source_ip in enumerate(sources)
+        ]
 
     def generate_botnet_c2(
         self,
@@ -320,19 +396,13 @@ class SyntheticFlowGenerator:
         """
         Generates a single flow event, choosing between benign traffic and anomalies.
         """
-        if random.random() > anomaly_ratio:
+        if self._distributed_ddos_queue:
+            event = self._distributed_ddos_queue.pop(0)
+        elif random.random() > anomaly_ratio:
             return self.generate_benign_flow()
-
-        threat_generators = [
-            self.generate_volumetric_ddos,
-            self.generate_botnet_c2,
-            self.generate_dga_dns_tunnel,
-            self.generate_encrypted_malware,
-            self.generate_recon_scan,
-            self.generate_data_exfiltration,
-        ]
-        chosen_generator = random.choice(threat_generators)
-        event = chosen_generator()
+        else:
+            chosen_generator = self._next_threat_generator()
+            event = chosen_generator()
 
         # Keep demo confidence levels varied without changing real detector scores.
         severity_roll = random.random()

@@ -91,7 +91,7 @@ class KafkaIngestConsumer:
             self.storage.insert_alert(alert)
 
             # Broadcast to live WebSockets if manager is configured
-            if self.ws_manager:
+            if self.ws_manager and not alert.suppressed:
                 # Use async broadcast safely in event loop if available, else background task
                 try:
                     loop = asyncio.get_running_loop()

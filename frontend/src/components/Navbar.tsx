@@ -85,7 +85,7 @@ export function Navbar({
 
           <div className="flex items-center space-x-1.5 text-xs text-zinc-400 font-mono bg-zinc-900/80 border border-zinc-800 px-3 py-1 rounded-md">
             <Activity01 className="h-3.5 w-3.5 text-zinc-400" />
-            <span>INGESTED:</span>
+            <span>RECEIVED TOTAL:</span>
             <span className="text-zinc-200 font-semibold">{totalAlerts}</span>
           </div>
         </div>

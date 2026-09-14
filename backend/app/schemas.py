@@ -7,7 +7,7 @@ sliding-window anomaly detection, and threat alert serialization.
 
 from datetime import datetime, timezone
 from enum import Enum
-from typing import List, Optional
+from typing import List, Literal, Optional
 from pydantic import BaseModel, Field, ConfigDict
 
 
@@ -21,6 +21,42 @@ class ThreatClassEnum(str, Enum):
     ENCRYPTED_MALWARE = "Encrypted Malware"
     RECON_SCAN = "Reconnaissance Scan"
     DATA_EXFIL = "Data Exfiltration"
+
+
+class AlertStatusEnum(str, Enum):
+    NEW = "new"
+    ACKNOWLEDGED = "acknowledged"
+    INVESTIGATING = "investigating"
+    RESOLVED = "resolved"
+    FALSE_POSITIVE = "false_positive"
+
+
+class AnalystNoteCreate(BaseModel):
+    text: str = Field(..., min_length=1, max_length=10_000)
+
+
+class AnalystNoteSchema(BaseModel):
+    flow_id: str
+    text: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class SuppressionRule(BaseModel):
+    id: str
+    rule_type: Literal["source_ip", "destination_ip", "source_ip_threat_class"]
+    source_ip: Optional[str] = None
+    destination_ip: Optional[str] = None
+    threat_class: Optional[ThreatClassEnum] = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    expires_at: Optional[datetime] = None
+
+
+class SuppressionRuleCreate(BaseModel):
+    rule_type: Literal["source_ip", "destination_ip", "source_ip_threat_class"]
+    source_ip: Optional[str] = None
+    destination_ip: Optional[str] = None
+    threat_class: Optional[ThreatClassEnum] = None
+    expires_at: Optional[datetime] = None
 
 
 class EvidenceSchema(BaseModel):
@@ -70,7 +106,11 @@ class EvidenceSchema(BaseModel):
     unique_destination_ports: Optional[int] = Field(default=None, ge=0)
     window_10s_fan_out: Optional[int] = Field(default=None, ge=0)
     window_60s_fan_out: Optional[int] = Field(default=None, ge=0)
+    unique_source_count: Optional[int] = Field(default=None, ge=0)
     total_uploaded_bytes: Optional[int] = Field(default=None, ge=0)
+    detectors_fired: List[str] = Field(default_factory=list)
+    detector_count: int = Field(default=1, ge=1)
+    confidence_basis: Optional[str] = None
     details: str = Field(
         ...,
         description="Human-readable context and rationale for the triggered detection rule",
@@ -132,6 +172,10 @@ class ThreatAlertSchema(BaseModel):
         ge=0.0,
         le=1.0,
     )
+    status: AlertStatusEnum = AlertStatusEnum.NEW
+    incident_id: Optional[str] = None
+    suppressed: bool = False
+    source: Literal["live", "replay"] = "live"
     ingest_latency_ms: Optional[float] = Field(default=None, ge=0.0)
     processing_latency_ms: Optional[float] = Field(default=None, ge=0.0)
     evidence: EvidenceSchema = Field(

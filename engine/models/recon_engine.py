@@ -10,6 +10,7 @@ from typing import Optional
 from backend.app.schemas import ThreatClassEnum
 from engine.features.metrics import calculate_flow_ratio, calculate_shannon_entropy
 from engine.models.base import BaseDetectionEngine, DetectionCandidate
+from engine.config import THRESHOLDS
 
 
 class ReconEngine(BaseDetectionEngine):
@@ -20,11 +21,12 @@ class ReconEngine(BaseDetectionEngine):
 
     def __init__(
         self,
-        min_target_cardinality: int = 3,
-        max_probe_bytes: int = 100,
+        min_target_cardinality: Optional[int] = None,
+        max_probe_bytes: Optional[int] = None,
     ):
-        self.min_target_cardinality = min_target_cardinality
-        self.max_probe_bytes = max_probe_bytes
+        config = THRESHOLDS["reconnaissance"]
+        self.min_target_cardinality = min_target_cardinality if min_target_cardinality is not None else config["min_target_cardinality"]
+        self.max_probe_bytes = max_probe_bytes if max_probe_bytes is not None else config["max_probe_bytes"]
 
     @property
     def threat_class(self) -> ThreatClassEnum:

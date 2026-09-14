@@ -1,26 +1,51 @@
-import { type KeyboardEvent, useState } from "react";
-import {
-  Alert02Icon as Alert02,
-  Shield01Icon as ShieldSecurity,
-  FingerPrintIcon as Fingerprint,
-} from "hugeicons-react";
+import { type CSSProperties, type KeyboardEvent, useEffect, useState } from "react";
 import { Navbar } from "@/components/Navbar";
 import { ThroughputGauge, TrafficWindow } from "@/components/ThroughputGauge";
 import { SystemHealthPanel } from "@/components/SystemHealthPanel";
+import { IncidentsPanel } from "@/components/IncidentsPanel";
 import { ThreatTrends } from "@/components/ThreatTrends";
 import { ThreatTable } from "@/components/ThreatTable";
 import { ForensicDrawer } from "@/components/ForensicDrawer";
-import { Card, CardContent } from "@/components/ui/card";
 import { useThreatSocket } from "@/hooks/useThreatSocket";
 import { ThreatAlertSchema } from "@/types/threat";
 
 type SeverityFilter = "critical" | "high" | null;
+type AlertViewMode = "live" | "archive";
 
 export function App() {
-  const { alerts, status, totalReceived } = useThreatSocket();
+  const { alerts, status, totalReceived, updateAlertStatus } = useThreatSocket();
   const [selectedAlert, setSelectedAlert] = useState<ThreatAlertSchema | null>(null);
+  const [alertViewMode, setAlertViewMode] = useState<AlertViewMode>("live");
+  const [archiveAlerts, setArchiveAlerts] = useState<ThreatAlertSchema[]>([]);
+  const [archivePage, setArchivePage] = useState(0);
+  const [archiveHasNext, setArchiveHasNext] = useState(false);
   const [severityFilter, setSeverityFilter] = useState<SeverityFilter>(null);
   const [selectedTrafficWindow, setSelectedTrafficWindow] = useState<TrafficWindow | null>(null);
+
+  useEffect(() => {
+    if (alertViewMode !== "archive") return;
+
+    let mounted = true;
+    fetch(`/api/alerts?limit=51&offset=${archivePage * 50}`)
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error("archive request failed")))
+      .then((data: ThreatAlertSchema[]) => {
+        if (!mounted) return;
+        setArchiveAlerts(data.slice(0, 50));
+        setArchiveHasNext(data.length > 50);
+      })
+      .catch(() => {
+        if (!mounted) return;
+        setArchiveAlerts([]);
+        setArchiveHasNext(false);
+      });
+
+    return () => { mounted = false; };
+  }, [alertViewMode, archivePage]);
+
+  const setAlertMode = (mode: AlertViewMode) => {
+    setAlertViewMode(mode);
+    if (mode === "archive") setArchivePage(0);
+  };
 
   const toggleSeverityFilter = (filter: Exclude<SeverityFilter, null>) => {
     setSeverityFilter((current) => (current === filter ? null : filter));
@@ -67,9 +92,15 @@ export function App() {
   }, {});
   const topVectorEntry = Object.entries(classCounts).sort((a, b) => b[1] - a[1])[0];
   const topVector = topVectorEntry ? topVectorEntry[0] : "None Detected";
+  const typeScale = {
+    "--text-display": "1.5rem",
+    "--text-heading": "0.75rem",
+    "--text-body": "0.75rem",
+    "--text-label": "0.625rem",
+  } as CSSProperties;
 
   return (
-    <div className="min-h-screen bg-[#070a14] text-zinc-100 flex flex-col font-sans selection:bg-emerald-500/20 selection:text-emerald-300">
+    <div style={typeScale} className="min-h-screen bg-[#070a14] text-zinc-100 flex flex-col font-sans selection:bg-emerald-500/20 selection:text-emerald-300">
       {/* Top SOC Navbar */}
       <Navbar
         status={status}
@@ -79,94 +110,56 @@ export function App() {
       {/* Main SOC Dashboard Viewport */}
       <main className="flex-1 p-4 md:p-6 space-y-4 max-w-[1600px] w-full mx-auto">
         {/* KPI Alert Summary Cards */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 lg:grid-cols-4 divide-x divide-zinc-800/70">
           {/* Card 1: Critical Threats */}
-          <Card
+          <div
             role="button"
             tabIndex={0}
             aria-pressed={severityFilter === "critical"}
             onClick={() => toggleSeverityFilter("critical")}
             onKeyDown={(event) => handleSeverityCardKeyDown(event, "critical")}
-            className={`cursor-pointer border-zinc-800/80 bg-[#090d16]/80 backdrop-blur-xl transition-colors hover:border-rose-500/50 ${
-              severityFilter === "critical" ? "border-rose-500/70 bg-rose-950/20" : ""
-            }`}
+            className={`cursor-pointer px-3 py-1 transition-colors hover:bg-rose-500/[0.04] ${severityFilter === "critical" ? "bg-rose-500/[0.06]" : ""}`}
           >
-            <CardContent className="p-3.5 flex items-center justify-between">
-              <div>
-                <p className="text-[10px] font-mono uppercase text-zinc-400">Critical Threats</p>
-                <div className="text-xl font-bold font-mono text-rose-400 mt-0.5">
-                  {criticalCount}
-                </div>
-              </div>
-              <div className="h-8 w-8 rounded-md bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400">
-                <Alert02 className="h-4 w-4" />
-              </div>
-            </CardContent>
-          </Card>
+            <p className="text-[length:var(--text-label)] font-mono uppercase text-zinc-500">Critical / Live Buffer</p>
+            <div className={`text-[length:var(--text-display)] font-bold font-mono tabular-nums ${criticalCount > 0 ? "text-rose-400" : "text-zinc-600"}`}>{criticalCount}</div>
+            <p className="text-[length:var(--text-label)] font-mono text-zinc-600">of {alerts.length} total alerts</p>
+          </div>
 
           {/* Card 2: High Severity */}
-          <Card
+          <div
             role="button"
             tabIndex={0}
             aria-pressed={severityFilter === "high"}
             onClick={() => toggleSeverityFilter("high")}
             onKeyDown={(event) => handleSeverityCardKeyDown(event, "high")}
-            className={`cursor-pointer border-zinc-800/80 bg-[#090d16]/80 backdrop-blur-xl transition-colors hover:border-amber-500/50 ${
-              severityFilter === "high" ? "border-amber-500/70 bg-amber-950/20" : ""
-            }`}
+            className={`cursor-pointer px-3 py-1 transition-colors hover:bg-amber-500/[0.04] ${severityFilter === "high" ? "bg-amber-500/[0.06]" : ""}`}
           >
-            <CardContent className="p-3.5 flex items-center justify-between">
-              <div>
-                <p className="text-[10px] font-mono uppercase text-zinc-400">High Severity</p>
-                <div className="text-xl font-bold font-mono text-amber-400 mt-0.5">
-                  {highCount}
-                </div>
-              </div>
-              <div className="h-8 w-8 rounded-md bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
-                <ShieldSecurity className="h-4 w-4" />
-              </div>
-            </CardContent>
-          </Card>
+            <p className="text-[length:var(--text-label)] font-mono uppercase text-zinc-500">High / Live Buffer</p>
+            <div className="text-[length:var(--text-display)] font-bold font-mono tabular-nums text-amber-400">{highCount}</div>
+            <p className="text-[length:var(--text-label)] font-mono text-zinc-600">of {alerts.length} total alerts</p>
+          </div>
 
           {/* Card 3: Avg Confidence */}
-          <Card className="border-zinc-800/80 bg-[#090d16]/80 backdrop-blur-xl">
-            <CardContent className="p-3.5 flex items-center justify-between">
-              <div>
-                <p className="text-[10px] font-mono uppercase text-zinc-400">Mean Confidence</p>
-                <div className="text-xl font-bold font-mono text-emerald-300 mt-0.5">
-                  {avgConfidence.toFixed(1)}%
-                </div>
-              </div>
-              <div className="h-8 w-8 rounded-md bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
-                <Fingerprint className="h-4 w-4" />
-              </div>
-            </CardContent>
-          </Card>
+          <div className="px-3 py-1">
+            <p className="text-[length:var(--text-label)] font-mono uppercase text-zinc-500">Mean Confidence</p>
+            <div className="text-[length:var(--text-display)] font-bold font-mono tabular-nums text-emerald-300">{avgConfidence.toFixed(1)}%</div>
+            <p className="text-[length:var(--text-label)] font-mono text-zinc-600">across {alerts.length ? 6 : 0} detectors</p>
+          </div>
 
           {/* Card 4: Top Vector */}
-          <Card
+          <div
             role="button"
             tabIndex={topVectorEntry ? 0 : -1}
             aria-label={topVectorEntry ? `Inspect dominant vector ${topVector}` : "No dominant vector available"}
             aria-disabled={!topVectorEntry}
             onClick={openDominantVector}
             onKeyDown={handleDominantVectorKeyDown}
-            className={`border-zinc-800/80 bg-[#090d16]/80 backdrop-blur-xl ${
-              topVectorEntry ? "cursor-pointer transition-colors hover:border-purple-500/50" : ""
-            }`}
+            className={`px-3 py-1 ${topVectorEntry ? "cursor-pointer transition-colors hover:bg-violet-500/[0.04]" : ""}`}
           >
-            <CardContent className="p-3.5 flex items-center justify-between">
-              <div className="overflow-hidden pr-1">
-                <p className="text-[10px] font-mono uppercase text-zinc-400">Dominant Vector</p>
-                <div className="text-xs font-semibold font-mono text-zinc-200 mt-1 truncate">
-                  {topVector}
-                </div>
-              </div>
-              <div className="h-8 w-8 rounded-md bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400 shrink-0">
-                <span className="font-mono text-xs font-bold">TOP</span>
-              </div>
-            </CardContent>
-          </Card>
+            <p className="text-[length:var(--text-label)] font-mono uppercase text-zinc-500">Dominant Vector</p>
+            <div className="text-[length:var(--text-body)] font-semibold font-mono text-zinc-200 mt-1 truncate">{topVector}</div>
+            <p className="text-[length:var(--text-label)] font-mono text-zinc-600">{topVectorEntry ? `${topVectorEntry[1]} live detections` : "awaiting telemetry"}</p>
+          </div>
         </div>
 
         {/* Real-time Throughput and Telemetry Gauge */}
@@ -178,14 +171,26 @@ export function App() {
 
         <SystemHealthPanel />
 
-        <ThreatTrends />
+        <ThreatTrends alerts={alerts} />
+
+        <IncidentsPanel />
 
         {/* Live Threat Alert Stream Table */}
         <ThreatTable
-          alerts={alerts}
+          alerts={alertViewMode === "live" ? alerts : archiveAlerts}
           onSelectAlert={(alert) => setSelectedAlert(alert)}
           selectedAlert={selectedAlert}
           severityFilter={severityFilter}
+          viewMode={alertViewMode}
+          onViewModeChange={setAlertMode}
+          archivePage={archivePage}
+          archiveHasNext={archiveHasNext}
+          onArchivePageChange={setArchivePage}
+          onAlertStatusChange={async (flowId, nextStatus) => {
+            const response = await fetch(`/api/alerts/${encodeURIComponent(flowId)}/status?status=${nextStatus}`, { method: "PATCH" });
+            if (!response.ok) throw new Error("status update failed");
+            updateAlertStatus(flowId, nextStatus);
+          }}
           timeWindowTimestamp={selectedTrafficWindow?.timestamp ?? null}
           onClearTimeWindow={() => setSelectedTrafficWindow(null)}
         />

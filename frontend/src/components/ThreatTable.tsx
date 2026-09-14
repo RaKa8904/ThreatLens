@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -9,7 +9,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { ThreatAlertSchema, ThreatClassEnum } from "@/types/threat";
+import { AlertStatusEnum, ThreatAlertSchema, ThreatClassEnum } from "@/types/threat";
 import { formatTimestamp } from "@/lib/utils";
 
 interface ThreatTableProps {
@@ -19,6 +19,12 @@ interface ThreatTableProps {
   severityFilter?: "critical" | "high" | null;
   timeWindowTimestamp?: number | null;
   onClearTimeWindow?: () => void;
+  viewMode?: "live" | "archive";
+  onViewModeChange?: (mode: "live" | "archive") => void;
+  archivePage?: number;
+  archiveHasNext?: boolean;
+  onArchivePageChange?: (page: number) => void;
+  onAlertStatusChange?: (flowId: string, status: AlertStatusEnum) => Promise<void>;
 }
 
 export function ThreatTable({
@@ -28,10 +34,50 @@ export function ThreatTable({
   severityFilter = null,
   timeWindowTimestamp = null,
   onClearTimeWindow,
+  viewMode = "live",
+  onViewModeChange,
+  archivePage = 0,
+  archiveHasNext = false,
+  onArchivePageChange,
+  onAlertStatusChange,
 }: ThreatTableProps) {
   const [selectedClass, setSelectedClass] = useState<string>("ALL");
   const [minConfidence, setMinConfidence] = useState<number>(0.0);
   const [searchQuery, setSearchQuery] = useState<string>("");
+  const [statusUpdating, setStatusUpdating] = useState<string | null>(null);
+  const [freshAlerts, setFreshAlerts] = useState<Set<string>>(new Set());
+  const knownAlertsRef = useRef<Set<string> | null>(null);
+  const freshTimeoutsRef = useRef<Map<string, number>>(new Map());
+
+  const getAlertKey = (alert: ThreatAlertSchema) => `${alert.flow_id}-${alert.timestamp}`;
+
+  useEffect(() => {
+    const currentKeys = new Set(alerts.map(getAlertKey));
+    if (knownAlertsRef.current === null) {
+      knownAlertsRef.current = currentKeys;
+      return;
+    }
+    const newKeys = [...currentKeys].filter((key) => !knownAlertsRef.current?.has(key));
+    if (newKeys.length) {
+      setFreshAlerts((current) => new Set([...current, ...newKeys]));
+      newKeys.forEach((key) => {
+        const timeout = window.setTimeout(() => {
+          setFreshAlerts((current) => {
+            const next = new Set(current);
+            next.delete(key);
+            return next;
+          });
+          freshTimeoutsRef.current.delete(key);
+        }, 950);
+        freshTimeoutsRef.current.set(key, timeout);
+      });
+    }
+    knownAlertsRef.current = currentKeys;
+  }, [alerts]);
+
+  useEffect(() => () => {
+    freshTimeoutsRef.current.forEach((timeout) => window.clearTimeout(timeout));
+  }, []);
 
   const getSeverityBadge = (score: number) => {
     if (score >= 0.85) {
@@ -56,7 +102,7 @@ export function ThreatTable({
       );
     }
     return (
-      <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+      <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-zinc-700/30 text-zinc-400 border border-zinc-700/40">
         LOW ({(score * 100).toFixed(0)}%)
       </span>
     );
@@ -64,19 +110,32 @@ export function ThreatTable({
 
   const getConfidenceProgressBar = (score: number) => {
     const width = Math.min(100, Math.max(5, Math.round(score * 100)));
-    let barColor = "bg-emerald-500";
+    let barColor = "bg-zinc-500";
     if (score >= 0.85) barColor = "bg-rose-500";
     else if (score >= 0.70) barColor = "bg-amber-500";
     else if (score >= 0.50) barColor = "bg-yellow-500";
 
     return (
-      <div className="w-24 bg-zinc-800 rounded-full h-1.5 overflow-hidden">
+      <div className="w-[70px] bg-zinc-800 rounded-full h-1 overflow-hidden">
         <div
           className={`h-full ${barColor} transition-all duration-300`}
           style={{ width: `${width}%` }}
         />
       </div>
     );
+  };
+
+  const getEvidenceTags = (alert: ThreatAlertSchema) => {
+    const tags: string[] = [];
+    const evidence = alert.evidence;
+    if (evidence.ja3_hash || evidence.ja4_hash || evidence.sni) tags.push("TLS");
+    if (evidence.splt_packet_sizes || evidence.splt_interarrival_times) tags.push("SPLT");
+    if (evidence.fft_concentration !== null && evidence.fft_concentration !== undefined) tags.push("FFT");
+    if (evidence.dns_query || evidence.ngram_score !== null && evidence.ngram_score !== undefined) tags.push("DNS");
+    if (evidence.z_score !== null && evidence.z_score !== undefined) tags.push("Z-SCORE");
+    if (evidence.unique_destination_hosts !== null && evidence.unique_destination_hosts !== undefined) tags.push("FAN-OUT");
+    if (evidence.total_uploaded_bytes !== null && evidence.total_uploaded_bytes !== undefined) tags.push("EGRESS");
+    return tags;
   };
 
   // Filter alerts
@@ -116,11 +175,36 @@ export function ThreatTable({
       <div className="p-3 border-b border-zinc-800/80 flex flex-wrap items-center justify-between gap-3 bg-[#090d16]">
         <div className="flex items-center space-x-2">
           <span className="text-xs font-mono font-semibold text-zinc-300 uppercase tracking-wider">
-            Live Stream
+            {viewMode === "live" ? "Live Stream" : "Archive REST"}
           </span>
           <Badge variant="outline" className="font-mono text-[10px] text-zinc-400 border-zinc-700">
-            {filteredAlerts.length} / {alerts.length} Displayed
+            {filteredAlerts.length} / {alerts.length} {viewMode === "live" ? "Live Buffer" : "Archive Page"}
           </Badge>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onViewModeChange?.("live")}
+              className={`h-6 px-2 text-[10px] font-mono ${viewMode === "live" ? "border-emerald-500/50 text-emerald-300" : "border-zinc-800 text-zinc-500"}`}
+            >
+              LIVE WS
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onViewModeChange?.("archive")}
+              className={`h-6 px-2 text-[10px] font-mono ${viewMode === "archive" ? "border-cyan-500/50 text-cyan-300" : "border-zinc-800 text-zinc-500"}`}
+            >
+              ARCHIVE REST
+            </Button>
+          </div>
+          {viewMode === "archive" && (
+            <div className="flex items-center gap-1 font-mono text-[10px] text-zinc-500">
+              <Button variant="outline" size="sm" disabled={archivePage === 0} onClick={() => onArchivePageChange?.(Math.max(0, archivePage - 1))} className="h-6 px-2 text-[10px]">PREV</Button>
+              <span>PAGE {archivePage + 1}</span>
+              <Button variant="outline" size="sm" disabled={!archiveHasNext} onClick={() => onArchivePageChange?.(archivePage + 1)} className="h-6 px-2 text-[10px]">NEXT</Button>
+            </div>
+          )}
           {timeWindowTimestamp !== null && (
             <Button
               variant="outline"
@@ -180,17 +264,18 @@ export function ThreatTable({
         <Table>
           <TableHeader>
             <TableRow className="hover:bg-transparent border-b border-zinc-800/80">
-              <TableHead className="w-36 text-zinc-400 font-mono text-xs">TIMESTAMP (UTC)</TableHead>
-              <TableHead className="min-w-[220px] text-zinc-400 font-mono text-xs">CANONICAL FLOW (SRC → DST)</TableHead>
-              <TableHead className="w-48 text-zinc-400 font-mono text-xs">THREAT CLASS</TableHead>
-              <TableHead className="w-40 text-zinc-400 font-mono text-xs">SEVERITY / CONFIDENCE</TableHead>
-              <TableHead className="text-right w-24 text-zinc-400 font-mono text-xs">ACTIONS</TableHead>
+              <TableHead className="w-36 text-zinc-500 font-mono text-[length:var(--text-label)]">TIMESTAMP (UTC)</TableHead>
+              <TableHead className="min-w-[220px] text-zinc-500 font-mono text-[length:var(--text-label)]">CANONICAL FLOW (SRC → DST)</TableHead>
+              <TableHead className="w-48 text-zinc-500 font-mono text-[length:var(--text-label)]">THREAT CLASS</TableHead>
+              <TableHead className="w-40 text-zinc-500 font-mono text-[length:var(--text-label)]">SEVERITY / CONFIDENCE</TableHead>
+              <TableHead className="w-32 text-zinc-500 font-mono text-[length:var(--text-label)]">STATUS</TableHead>
+              <TableHead className="text-right w-24 text-zinc-500 font-mono text-[length:var(--text-label)]">ACTIONS</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {filteredAlerts.length === 0 ? (
               <TableRow className="hover:bg-transparent">
-                <TableCell colSpan={5} className="h-32 text-center text-zinc-500 font-mono">
+                <TableCell colSpan={6} className="h-32 text-center text-zinc-500 font-mono">
                   {alerts.length === 0
                     ? "Awaiting network flow telemetry stream..."
                     : "No alerts match active filters."}
@@ -199,18 +284,19 @@ export function ThreatTable({
             ) : (
               filteredAlerts.map((alert, idx) => {
                 const isSelected = selectedAlert?.flow_id === alert.flow_id && selectedAlert?.timestamp === alert.timestamp;
+                const alertKey = getAlertKey(alert);
                 return (
                   <TableRow
                     key={`${alert.flow_id}-${alert.timestamp}-${idx}`}
                     onClick={() => onSelectAlert(alert)}
-                    className={`transition-colors border-b border-zinc-800/40 cursor-pointer ${
+                    className={`transition-colors duration-1000 border-b border-zinc-800/40 cursor-pointer ${freshAlerts.has(alertKey) && viewMode === "live" ? "bg-emerald-500/[0.12]" : ""} ${
                       isSelected
                         ? "bg-zinc-800/90 border-emerald-500/40"
                         : "hover:bg-zinc-900/60"
                     }`}
                   >
                     {/* Timestamp */}
-                    <TableCell className="font-mono text-zinc-400 text-[11px] whitespace-nowrap">
+                    <TableCell title={formatTimestamp(alert.timestamp)} className="font-mono text-zinc-400 text-[11px] whitespace-nowrap">
                       {formatTimestamp(alert.timestamp).substring(11, 23)}
                     </TableCell>
 
@@ -229,7 +315,14 @@ export function ThreatTable({
 
                     {/* Threat Class */}
                     <TableCell className="font-medium text-zinc-200 font-sans text-xs">
-                      {alert.threat_class}
+                      <div>{alert.threat_class}</div>
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {getEvidenceTags(alert).map((tag) => (
+                          <span key={tag} className="rounded border border-cyan-500/20 bg-cyan-500/[0.06] px-1 py-0.5 text-[9px] font-mono text-cyan-300">
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
                     </TableCell>
 
                     {/* Confidence & Severity */}
@@ -238,6 +331,26 @@ export function ThreatTable({
                         {getSeverityBadge(alert.confidence_score)}
                         {getConfidenceProgressBar(alert.confidence_score)}
                       </div>
+                    </TableCell>
+
+                    <TableCell>
+                      <select
+                        value={alert.status ?? AlertStatusEnum.NEW}
+                        disabled={!onAlertStatusChange || statusUpdating === getAlertKey(alert)}
+                        onChange={async (event) => {
+                          if (!onAlertStatusChange) return;
+                          setStatusUpdating(getAlertKey(alert));
+                          try {
+                            await onAlertStatusChange(alert.flow_id, event.target.value as AlertStatusEnum);
+                          } finally {
+                            setStatusUpdating(null);
+                          }
+                        }}
+                        className="h-7 max-w-32 rounded border border-zinc-800 bg-zinc-900 px-1.5 text-[10px] font-mono text-zinc-300"
+                        aria-label={`Status for ${alert.flow_id}`}
+                      >
+                        {Object.values(AlertStatusEnum).map((statusOption) => <option key={statusOption} value={statusOption}>{statusOption.replace("_", " ")}</option>)}
+                      </select>
                     </TableCell>
 
                     {/* Action */}

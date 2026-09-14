@@ -103,6 +103,26 @@ class TestZeekLogNormalization(unittest.TestCase):
         self.assertIn("SYN", norm["flags"])
         self.assertIn("ACK", norm["flags"])
 
+    def test_normalize_one_way_syn_flood_as_inbound_target_traffic(self):
+        raw_conn = {
+            "ts": 1726180000.5,
+            "id.orig_h": "203.0.113.88",
+            "id.orig_p": 30000,
+            "id.resp_h": "192.168.1.1",
+            "id.resp_p": 80,
+            "proto": "tcp",
+            "orig_bytes": 14000,
+            "resp_bytes": 0,
+            "orig_pkts": 350,
+            "resp_pkts": 0,
+            "history": "S",
+        }
+        norm = normalize_conn_record(raw_conn)
+        self.assertEqual(norm["packets_in"], 350)
+        self.assertEqual(norm["packets_out"], 0)
+        self.assertEqual(norm["bytes_in"], 14000)
+        self.assertEqual(norm["bytes_out"], 0)
+
     def test_normalize_dns_record(self):
         raw_dns = {
             "ts": 1726180001.0,

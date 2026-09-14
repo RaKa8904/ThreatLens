@@ -94,6 +94,15 @@ def normalize_conn_record(entry: Dict[str, Any]) -> Dict[str, Any]:
     if not flags and "flags" in entry:
         flags = entry["flags"]
 
+    # ThreatLens presents packet direction from the protected target's view.
+    # A one-way SYN flood has originator packets arriving at the target with no
+    # response, so expose those packets as inbound rather than egress traffic.
+    history = str(entry.get("history") or "")
+    is_one_way_syn = "S" in history and "h" not in history and "A" not in history and packets_in == 0
+    if is_one_way_syn:
+        bytes_out, bytes_in = bytes_in, bytes_out
+        packets_out, packets_in = packets_in, packets_out
+
     return {
         "timestamp": parse_zeek_timestamp(entry.get("ts")),
         "flow_id": flow_id,

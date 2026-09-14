@@ -15,6 +15,14 @@ export enum ThreatClassEnum {
 
 export type ThreatClass = `${ThreatClassEnum}`;
 
+export enum AlertStatusEnum {
+  NEW = "new",
+  ACKNOWLEDGED = "acknowledged",
+  INVESTIGATING = "investigating",
+  RESOLVED = "resolved",
+  FALSE_POSITIVE = "false_positive",
+}
+
 export interface EvidenceSchema {
   inter_arrival_variance: number;
   shannon_entropy: number;
@@ -39,7 +47,11 @@ export interface EvidenceSchema {
   unique_destination_ports?: number | null;
   window_10s_fan_out?: number | null;
   window_60s_fan_out?: number | null;
+  unique_source_count?: number | null;
   total_uploaded_bytes?: number | null;
+  detectors_fired?: string[];
+  detector_count?: number;
+  confidence_basis?: string | null;
   details: string;
   packets_in?: number | null;
   packets_out?: number | null;
@@ -66,9 +78,29 @@ export interface ThreatAlertSchema {
   protocol?: string | null;
   threat_class: ThreatClassEnum | ThreatClass;
   confidence_score: number;
+  status: AlertStatusEnum;
+  incident_id?: string | null;
+  suppressed: boolean;
+  source: "live" | "replay";
   ingest_latency_ms?: number | null;
   processing_latency_ms?: number | null;
   evidence: EvidenceSchema;
+}
+
+export interface AnalystNote {
+  flow_id: string;
+  text: string;
+  created_at: string;
+}
+
+export interface SuppressionRule {
+  id: string;
+  rule_type: "source_ip" | "destination_ip" | "source_ip_threat_class";
+  source_ip?: string | null;
+  destination_ip?: string | null;
+  threat_class?: ThreatClassEnum | null;
+  created_at: string;
+  expires_at?: string | null;
 }
 
 // Aliases for convenience in dashboard components

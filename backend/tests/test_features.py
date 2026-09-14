@@ -212,11 +212,12 @@ class TestSyntheticFlowGenerator(unittest.TestCase):
 
     def test_volumetric_ddos_characteristics(self):
         flow = self.generator.generate_volumetric_ddos(target_ip="10.0.0.1", target_port=80)
-        self.assertEqual(flow["simulated_label"], "Volumetric & Protocol DDoS")
+        self.assertEqual(flow["simulated_label"], "Protocol DoS")
         self.assertEqual(flow["dst_ip"], "10.0.0.1")
         self.assertEqual(flow["dst_port"], 80)
         self.assertIn("SYN", flow["flags"])
-        self.assertGreaterEqual(flow["packets_out"], 500)
+        self.assertGreaterEqual(flow["packets_in"], 500)
+        self.assertLess(flow["packets_out"], flow["packets_in"])
 
     def test_botnet_c2_beacon_characteristics(self):
         # Generate 4 consecutive beacons
@@ -267,6 +268,11 @@ class TestSyntheticFlowGenerator(unittest.TestCase):
         labels = {b["simulated_label"] for b in batch}
         self.assertIn("Benign", labels)
         self.assertTrue(any(label != "Benign" for label in labels))
+
+        def test_anomaly_vectors_rotate_before_repeating(self):
+            generator = SyntheticFlowGenerator(seed=123)
+            labels = [generator.generate_event(anomaly_ratio=1.0)["simulated_label"] for _ in range(6)]
+            self.assertEqual(len(set(labels)), 6)
 
 
 if __name__ == "__main__":

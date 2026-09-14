@@ -10,6 +10,7 @@ from typing import Optional
 from backend.app.schemas import ThreatClassEnum
 from engine.features.metrics import calculate_flow_ratio, calculate_shannon_entropy
 from engine.models.base import BaseDetectionEngine, DetectionCandidate
+from engine.config import THRESHOLDS
 
 
 class DNSEngine(BaseDetectionEngine):
@@ -20,11 +21,12 @@ class DNSEngine(BaseDetectionEngine):
 
     def __init__(
         self,
-        entropy_threshold: float = 3.80,
-        tunnel_length_threshold: int = 60,
+        entropy_threshold: Optional[float] = None,
+        tunnel_length_threshold: Optional[int] = None,
     ):
-        self.entropy_threshold = entropy_threshold
-        self.tunnel_length_threshold = tunnel_length_threshold
+        config = THRESHOLDS["dns"]
+        self.entropy_threshold = entropy_threshold if entropy_threshold is not None else config["entropy_threshold"]
+        self.tunnel_length_threshold = tunnel_length_threshold if tunnel_length_threshold is not None else config["tunnel_length_threshold"]
 
     @property
     def threat_class(self) -> ThreatClassEnum:
@@ -62,7 +64,7 @@ class DNSEngine(BaseDetectionEngine):
         # 3. Encoded binary tunnel in TXT or NULL records
         is_high_entropy = max_entropy >= self.entropy_threshold
         is_tunnel_length = query_len >= self.tunnel_length_threshold
-        is_txt_tunnel = query_type in ["TXT", "NULL"] and (query_len >= 45 or max_entropy >= 3.60)
+        is_txt_tunnel = query_type in ["TXT", "NULL"] and (query_len >= THRESHOLDS["dns"]["txt_tunnel_length"] or max_entropy >= THRESHOLDS["dns"]["txt_entropy_threshold"])
 
         if is_high_entropy or is_tunnel_length or is_txt_tunnel:
             # Scale confidence from 0.78 up to 0.98

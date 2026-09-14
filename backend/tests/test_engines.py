@@ -53,7 +53,50 @@ class TestThreatDetectionEngines(unittest.TestCase):
         self.assertIsNotNone(candidate)
         self.assertEqual(candidate.threat_class, ThreatClassEnum.VOLUMETRIC_DOS)
         self.assertGreaterEqual(candidate.confidence_score, 0.75)
-        self.assertIn("SYN Flood", candidate.details)
+        self.assertIn("SYN Flood / DoS", candidate.details)
+        self.assertGreater(flow["packets_in"], flow["packets_out"])
+
+    def test_distributed_ddos_detection_uses_multiple_sources(self):
+        engine = DDoSEngine()
+        flows = self.generator.generate_distributed_ddos_batch(source_count=5, timestamp=2000.0)
+
+        for flow in flows:
+            self.store.record_10s_packet(
+                src_ip=flow["src_ip"],
+                timestamp=flow["timestamp"],
+                dst_endpoint=f"{flow['dst_ip']}:{flow['dst_port']}",
+                is_syn=True,
+                byte_count=flow["bytes_out"],
+                target_key=f"target:{flow['dst_ip']}:{flow['dst_port']}",
+            )
+
+        candidate = engine.evaluate(flows[-1], self.store)
+        self.assertIsNotNone(candidate)
+        self.assertIn("Distributed SYN Flood", candidate.details)
+        self.assertIn("5 source(s)", candidate.details)
+
+    def test_live_simulated_ddos_scenario_emits_distributed_burst(self):
+        generator = SyntheticFlowGenerator(seed=7)
+        first = generator.generate_simulated_ddos()
+        self.assertEqual(first["attack_type"], "distributed-ddos")
+
+        burst = [first]
+        burst.extend(generator.generate_event(anomaly_ratio=0.0) for _ in range(4))
+        self.assertEqual({flow["src_ip"] for flow in burst}, {
+            "203.0.113.1",
+            "203.0.113.2",
+            "203.0.113.3",
+            "203.0.113.4",
+            "203.0.113.5",
+        })
+
+    def test_outbound_heavy_flow_is_not_ddos(self):
+        engine = DDoSEngine()
+        flow = self.generator.generate_volumetric_ddos()
+        flow["packets_in"] = 1
+        flow["packets_out"] = 2000
+        flow["flags"] = ["ACK", "PSH"]
+        self.assertIsNone(engine.evaluate(flow, self.store))
 
     def test_beaconing_engine_detection(self):
         engine = BeaconingEngine()

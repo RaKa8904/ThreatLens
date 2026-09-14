@@ -6,7 +6,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ThreatAlertSchema } from "@/types/threat";
+import { AlertStatusEnum, ThreatAlertSchema } from "@/types/threat";
 
 export type ConnectionStatus = "CONNECTING" | "CONNECTED" | "DISCONNECTED";
 
@@ -100,10 +100,15 @@ export function useThreatSocket(url?: string) {
     setAlerts([]);
   }, []);
 
+  const updateAlertStatus = useCallback((flowId: string, status: AlertStatusEnum) => {
+    setAlerts((current) => current.map((alert) => alert.flow_id === flowId ? { ...alert, status } : alert));
+  }, []);
+
   return {
     alerts,
     status,
     clearAlerts,
+    updateAlertStatus,
     totalReceived,
   };
 }

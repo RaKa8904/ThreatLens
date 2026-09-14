@@ -51,6 +51,7 @@ class SlidingWindowStore:
         self.use_redis = use_redis
         self.redis_client = None
         self.is_redis_connected = False
+        self.fallback_active = not use_redis
 
         # In-memory storage: key -> deque of (timestamp, payload)
         self._memory_store: Dict[str, deque] = {}
@@ -75,6 +76,7 @@ class SlidingWindowStore:
                 client.ping()
                 self.redis_client = client
                 self.is_redis_connected = True
+                self.fallback_active = False
                 logger.info("Connected to Redis at %s:%s (db=%d)", host, port, redis_db)
             except Exception as exc:
                 logger.warning(
@@ -83,6 +85,7 @@ class SlidingWindowStore:
                 )
                 self.redis_client = None
                 self.is_redis_connected = False
+                self.fallback_active = True
 
     def _make_key(self, window_sec: int, key: str) -> str:
         """Constructs a namespaced storage key."""
@@ -124,6 +127,7 @@ class SlidingWindowStore:
             except Exception as exc:
                 logger.error("Redis zadd failed: %s. Reverting to in-memory.", exc)
                 self.is_redis_connected = False
+                self.fallback_active = True
 
         # In-memory implementation
         with self._lock:
@@ -237,6 +241,7 @@ class SlidingWindowStore:
         dst_endpoint: str,
         is_syn: bool = False,
         byte_count: int = 0,
+        target_key: Optional[str] = None,
     ) -> None:
         """
         Records packet metadata for 10-second volumetric DDoS & fan-out detection.
@@ -246,8 +251,11 @@ class SlidingWindowStore:
             "dst_endpoint": dst_endpoint,
             "is_syn": is_syn,
             "byte_count": byte_count,
+            "source_ip": src_ip,
         }
         self.add_event(WINDOW_10S, src_ip, timestamp, payload)
+        if target_key:
+            self.add_event(WINDOW_10S, target_key, timestamp, payload)
 
     def get_10s_metrics(
         self,
@@ -274,6 +282,7 @@ class SlidingWindowStore:
             "total_bytes": total_bytes,
             "fan_out_count": fan_out,
             "packets_per_sec": round(packet_count / float(WINDOW_10S), 2),
+            "unique_source_count": len({e.get("source_ip") for e in events if e.get("source_ip")}),
         }
 
     # =========================================================================
