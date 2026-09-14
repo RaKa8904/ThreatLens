@@ -21,6 +21,25 @@ export interface EvidenceSchema {
   byte_ratio: number;
   fan_out_count: number;
   ja3_hash?: string | null;
+  ja4_hash?: string | null;
+  sni?: string | null;
+  splt_packet_sizes?: number[] | null;
+  splt_interarrival_times?: number[] | null;
+  fft_concentration?: number | null;
+  beacon_period_seconds?: number | null;
+  inter_arrival_stddev?: number | null;
+  dns_query?: string | null;
+  dns_query_length?: number | null;
+  dns_query_type?: string | null;
+  ngram_score?: number | null;
+  packets_per_second?: number | null;
+  z_score?: number | null;
+  source_ip_entropy?: number | null;
+  unique_destination_hosts?: number | null;
+  unique_destination_ports?: number | null;
+  window_10s_fan_out?: number | null;
+  window_60s_fan_out?: number | null;
+  total_uploaded_bytes?: number | null;
   details: string;
   packets_in?: number | null;
   packets_out?: number | null;
@@ -30,6 +49,7 @@ export interface EvidenceSchema {
   inbound_bytes?: number | null;
   outbound_bytes?: number | null;
   source_ip?: string | null;
+  source_port?: number | null;
   destination_ip?: string | null;
   destination_port?: number | null;
   protocol?: string | null;
@@ -39,8 +59,15 @@ export interface EvidenceSchema {
 export interface ThreatAlertSchema {
   timestamp: string; // ISO 8601 UTC timestamp string
   flow_id: string;
+  source_ip?: string | null;
+  source_port?: number | null;
+  destination_ip?: string | null;
+  destination_port?: number | null;
+  protocol?: string | null;
   threat_class: ThreatClassEnum | ThreatClass;
   confidence_score: number;
+  ingest_latency_ms?: number | null;
+  processing_latency_ms?: number | null;
   evidence: EvidenceSchema;
 }
 

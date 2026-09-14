@@ -42,6 +42,9 @@ throughput_state = {
     "total_packets": 0,
     "total_bytes": 0,
     "start_time": time.time(),
+    "last_ingest_at": None,
+    "last_processing_latency_ms": None,
+    "last_delivery_latency_ms": None,
 }
 
 
@@ -50,6 +53,19 @@ def record_flow_telemetry(payload: Dict[str, Any]):
     throughput_state["total_flows"] += 1
     throughput_state["total_packets"] += int(payload.get("packets_out") or 1) + int(payload.get("packets_in") or 0)
     throughput_state["total_bytes"] += int(payload.get("bytes_out") or 0) + int(payload.get("bytes_in") or 0)
+    throughput_state["last_ingest_at"] = time.time()
+
+
+def event_timestamp_seconds(payload: Dict[str, Any]) -> Optional[float]:
+    timestamp = payload.get("timestamp")
+    if isinstance(timestamp, (int, float)):
+        return float(timestamp)
+    if isinstance(timestamp, str):
+        try:
+            return datetime.fromisoformat(timestamp.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            return None
+    return None
 
 
 async def background_stream_worker(interval_seconds: float = 1.5):
@@ -69,15 +85,24 @@ async def background_stream_worker(interval_seconds: float = 1.5):
             record_flow_telemetry(event)
 
             # Run detection pipeline
+            processing_started = time.perf_counter()
             alerts = pipeline.process_flow_event(event)
+            processing_latency_ms = (time.perf_counter() - processing_started) * 1000
+            throughput_state["last_processing_latency_ms"] = round(processing_latency_ms, 3)
 
             # Ingest to ClickHouse and broadcast live to WebSocket clients
             simulated_confidence = event.get("simulated_confidence")
             for alert in alerts:
                 if simulated_confidence is not None:
                     alert = alert.model_copy(update={"confidence_score": simulated_confidence})
+                event_ts = event_timestamp_seconds(event)
+                alert = alert.model_copy(update={
+                    "ingest_latency_ms": round(max(0.0, time.time() - event_ts) * 1000, 3) if event_ts else None,
+                    "processing_latency_ms": round(processing_latency_ms, 3),
+                })
                 alert_store.insert_alert(alert)
                 await ws_manager.broadcast(alert)
+                throughput_state["last_delivery_latency_ms"] = round(max(0.0, time.time() - alert.timestamp.timestamp()) * 1000, 3)
 
             flow_rate = max(float(os.getenv("SIMULATION_FLOWS_PER_SECOND", "10")), 0.1)
             await asyncio.sleep(1.0 / flow_rate)
@@ -171,12 +196,23 @@ def get_system_health():
                 "engines_count": len(pipeline.aggregator.engines),
                 "supported_classes": [c.value for c in ThreatClassEnum],
             },
+            "passive_ingest": {
+                "status": "zero-egress-read-only",
+                "zero_egress": True,
+                "read_only": True,
+                "outbound_return_path": False,
+            },
         },
         "websocket": {
             "active_clients": ws_manager.client_count,
         },
         "archive": {
             "total_alerts_recorded": alert_store.get_alert_count(),
+        },
+        "telemetry": {
+            "last_ingest_at": throughput_state["last_ingest_at"],
+            "processing_latency_ms": throughput_state["last_processing_latency_ms"],
+            "delivery_latency_ms": throughput_state["last_delivery_latency_ms"],
         },
     }
 
@@ -210,11 +246,52 @@ def get_network_throughput():
         "flows_per_sec": flows_per_sec,
         "packets_per_sec": packets_per_sec,
         "bytes_per_sec": bytes_per_sec,
+        "megabits_per_sec": round(bytes_per_sec * 8 / 1_000_000, 3),
         "total_flows": throughput_state["total_flows"],
         "total_packets": throughput_state["total_packets"],
         "total_bytes": throughput_state["total_bytes"],
         "total_alerts": alert_store.get_alert_count(),
         "active_websocket_clients": ws_manager.client_count,
+        "processing_latency_ms": throughput_state["last_processing_latency_ms"],
+        "delivery_latency_ms": throughput_state["last_delivery_latency_ms"],
+    }
+
+
+@app.get("/api/analytics/trends", response_model=Dict[str, Any], tags=["Analytics"])
+def get_alert_trends(
+    window_minutes: int = Query(60, ge=5, le=1440),
+    bucket_minutes: int = Query(5, ge=1, le=60),
+):
+    """Returns selectable time-bucketed alert counts for all six threat vectors."""
+    alerts = alert_store.get_recent_alerts(limit=500)
+    now = datetime.now(timezone.utc).timestamp()
+    start = now - window_minutes * 60
+    classes = [c.value for c in ThreatClassEnum]
+    bucket_seconds = bucket_minutes * 60
+    buckets: Dict[int, Dict[str, int]] = {}
+    for alert in alerts:
+        timestamp = alert.timestamp.timestamp()
+        if timestamp < start:
+            continue
+        bucket = int((timestamp - start) // bucket_seconds)
+        counts = buckets.setdefault(bucket, {threat_class: 0 for threat_class in classes})
+        threat_class = alert.threat_class.value if isinstance(alert.threat_class, ThreatClassEnum) else str(alert.threat_class)
+        if threat_class in counts:
+            counts[threat_class] += 1
+
+    points = []
+    bucket_count = max(1, (window_minutes + bucket_minutes - 1) // bucket_minutes)
+    for bucket in range(bucket_count):
+        bucket_start = start + bucket * bucket_seconds
+        points.append({
+            "timestamp": datetime.fromtimestamp(bucket_start, timezone.utc).isoformat(),
+            "counts": buckets.get(bucket, {threat_class: 0 for threat_class in classes}),
+        })
+    return {
+        "window_minutes": window_minutes,
+        "bucket_minutes": bucket_minutes,
+        "threat_classes": classes,
+        "points": points,
     }
 
 

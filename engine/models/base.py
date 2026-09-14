@@ -6,7 +6,7 @@ Defines the base contract and result schema for modular threat detection engines
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Optional
+from typing import List, Optional
 
 from backend.app.schemas import EvidenceSchema, ThreatClassEnum
 
@@ -29,6 +29,25 @@ class DetectionCandidate:
     outbound_connections: Optional[int] = None
     port_connections: Optional[int] = None
     observation_window_seconds: Optional[int] = None
+    ja4_hash: Optional[str] = None
+    sni: Optional[str] = None
+    splt_packet_sizes: Optional[List[int]] = None
+    splt_interarrival_times: Optional[List[float]] = None
+    fft_concentration: Optional[float] = None
+    beacon_period_seconds: Optional[float] = None
+    inter_arrival_stddev: Optional[float] = None
+    dns_query: Optional[str] = None
+    dns_query_length: Optional[int] = None
+    dns_query_type: Optional[str] = None
+    ngram_score: Optional[float] = None
+    packets_per_second: Optional[float] = None
+    z_score: Optional[float] = None
+    source_ip_entropy: Optional[float] = None
+    unique_destination_hosts: Optional[int] = None
+    unique_destination_ports: Optional[int] = None
+    window_10s_fan_out: Optional[int] = None
+    window_60s_fan_out: Optional[int] = None
+    total_uploaded_bytes: Optional[int] = None
 
     def to_evidence(self) -> EvidenceSchema:
         """Converts detection metrics into a validated Pydantic EvidenceSchema."""
@@ -38,6 +57,25 @@ class DetectionCandidate:
             byte_ratio=float(round(max(0.0, self.byte_ratio), 4)),
             fan_out_count=int(max(0, self.fan_out_count)),
             ja3_hash=self.ja3_hash,
+            ja4_hash=self.ja4_hash,
+            sni=self.sni,
+            splt_packet_sizes=self.splt_packet_sizes,
+            splt_interarrival_times=self.splt_interarrival_times,
+            fft_concentration=self.fft_concentration,
+            beacon_period_seconds=self.beacon_period_seconds,
+            inter_arrival_stddev=self.inter_arrival_stddev,
+            dns_query=self.dns_query,
+            dns_query_length=self.dns_query_length,
+            dns_query_type=self.dns_query_type,
+            ngram_score=self.ngram_score,
+            packets_per_second=self.packets_per_second,
+            z_score=self.z_score,
+            source_ip_entropy=self.source_ip_entropy,
+            unique_destination_hosts=self.unique_destination_hosts,
+            unique_destination_ports=self.unique_destination_ports,
+            window_10s_fan_out=self.window_10s_fan_out,
+            window_60s_fan_out=self.window_60s_fan_out,
+            total_uploaded_bytes=self.total_uploaded_bytes,
             details=self.details,
             inbound_connections=self.inbound_connections,
             outbound_connections=self.outbound_connections,

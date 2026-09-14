@@ -79,6 +79,10 @@ class BeaconingEngine(BaseDetectionEngine):
 
         iat_variance = calculate_inter_arrival_variance(sorted_ts)
         mean_period, fft_concentration = self._compute_fft_periodicity(deltas)
+        delta_mean = sum(deltas) / len(deltas)
+        inter_arrival_stddev = math.sqrt(
+            sum((delta - delta_mean) ** 2 for delta in deltas) / len(deltas)
+        )
 
         # Detection condition:
         # 1. Spaced intervals (mean period >= min_period_seconds, not bulk packets in one second)
@@ -113,6 +117,9 @@ class BeaconingEngine(BaseDetectionEngine):
                 fan_out_count=1,
                 ja3_hash=ja3_hash,
                 details=details,
+                fft_concentration=fft_concentration,
+                beacon_period_seconds=mean_period,
+                inter_arrival_stddev=inter_arrival_stddev,
             )
 
         return None

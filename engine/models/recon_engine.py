@@ -88,6 +88,10 @@ class ReconEngine(BaseDetectionEngine):
                 details=details,
                 port_connections=unique_ports,
                 observation_window_seconds=m60.get("window_sec", 60),
+                unique_destination_hosts=unique_ips,
+                unique_destination_ports=unique_ports,
+                window_10s_fan_out=fan_out_10s,
+                window_60s_fan_out=max(unique_ips, unique_ports),
             )
 
         return None

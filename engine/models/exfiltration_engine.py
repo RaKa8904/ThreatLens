@@ -79,6 +79,7 @@ class ExfiltrationEngine(BaseDetectionEngine):
                 inbound_connections=1,
                 outbound_connections=1,
                 observation_window_seconds=300,
+                total_uploaded_bytes=total_out,
             )
 
         return None

@@ -211,7 +211,7 @@ export function ThreatTable({
                   >
                     {/* Timestamp */}
                     <TableCell className="font-mono text-zinc-400 text-[11px] whitespace-nowrap">
-                      {formatTimestamp(alert.timestamp).substring(11, 19)}
+                      {formatTimestamp(alert.timestamp).substring(11, 23)}
                     </TableCell>
 
                     {/* Canonical Flow */}

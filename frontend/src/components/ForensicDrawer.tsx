@@ -28,6 +28,11 @@ export function ForensicDrawer({ alert, onClose }: ForensicDrawerProps) {
 
   const { evidence } = alert;
   const isReconnaissance = String(alert.threat_class) === "Reconnaissance Scan";
+  const isBeaconing = String(alert.threat_class) === "Botnet C2 Beaconing";
+  const isDns = String(alert.threat_class) === "DGA & DNS Tunneling";
+  const isDdos = String(alert.threat_class) === "Volumetric & Protocol DDoS";
+  const isMalware = String(alert.threat_class) === "Encrypted Malware";
+  const isExfiltration = String(alert.threat_class) === "Data Exfiltration";
   const portConnectionCount = evidence.port_connections ?? evidence.fan_out_count;
 
   const formatBytes = (bytes: number | null | undefined) => {
@@ -87,6 +92,15 @@ export function ForensicDrawer({ alert, onClose }: ForensicDrawerProps) {
               {evidence.details}
             </div>
           </div>
+
+            <div className="rounded-lg border border-slate-800/80 bg-slate-900/40 p-3 space-y-2 font-mono text-[11px]">
+              <div className="text-[10px] uppercase tracking-wider text-cyan-300">Flow Identifiers</div>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+                <span className="text-slate-400">SOURCE</span><span className="text-slate-100 break-all">{alert.source_ip ?? evidence.source_ip ?? "N/A"}:{alert.source_port ?? evidence.source_port ?? "N/A"}</span>
+                <span className="text-slate-400">DESTINATION</span><span className="text-slate-100 break-all">{alert.destination_ip ?? evidence.destination_ip ?? "N/A"}:{alert.destination_port ?? evidence.destination_port ?? "N/A"}</span>
+                <span className="text-slate-400">PROTOCOL</span><span className="text-slate-100">{alert.protocol ?? evidence.protocol ?? "N/A"}</span>
+              </div>
+            </div>
 
           {/* Core Telemetry Metrics Grid */}
           <div className="grid grid-cols-2 gap-2">
@@ -198,6 +212,17 @@ export function ForensicDrawer({ alert, onClose }: ForensicDrawerProps) {
                   <span className="text-slate-100">{evidence.observation_window_seconds}s</span>
                 </div>
               )}
+              {isBeaconing && (
+                <>
+                  <div className="col-span-2 flex justify-between border-t border-cyan-500/10 pt-2"><span className="text-slate-400">IAT STDDEV:</span><span className="text-emerald-300">{evidence.inter_arrival_stddev?.toFixed(6) ?? "N/A"} s</span></div>
+                  <div className="flex justify-between"><span className="text-slate-400">BEACON PERIOD:</span><span className="text-emerald-300">{evidence.beacon_period_seconds?.toFixed(2) ?? "N/A"} s</span></div>
+                  <div className="flex justify-between"><span className="text-slate-400">FFT CONCENTRATION:</span><span className="text-emerald-300">{evidence.fft_concentration?.toFixed(3) ?? "N/A"}</span></div>
+                </>
+              )}
+              {isDdos && <><div className="col-span-2 flex justify-between border-t border-cyan-500/10 pt-2"><span className="text-slate-400">PPS / Z-SCORE:</span><span className="text-rose-300">{evidence.packets_per_second?.toFixed(1) ?? "N/A"} / {evidence.z_score?.toFixed(2) ?? "N/A"}</span></div><div className="col-span-2 flex justify-between"><span className="text-slate-400">SOURCE-IP ENTROPY:</span><span className="text-rose-300">{evidence.source_ip_entropy?.toFixed(3) ?? "N/A"}</span></div></>}
+              {isDns && <><div className="col-span-2 flex justify-between border-t border-cyan-500/10 pt-2"><span className="text-slate-400">QUERY:</span><span className="text-cyan-200 break-all text-right">{evidence.dns_query ?? "N/A"}</span></div><div className="flex justify-between"><span className="text-slate-400">QUERY LENGTH / TYPE:</span><span className="text-cyan-200">{evidence.dns_query_length ?? "N/A"} / {evidence.dns_query_type ?? "N/A"}</span></div><div className="flex justify-between"><span className="text-slate-400">N-GRAM SCORE:</span><span className="text-cyan-200">{evidence.ngram_score?.toFixed(3) ?? "N/A"}</span></div></>}
+              {isReconnaissance && <><div className="col-span-2 flex justify-between border-t border-cyan-500/10 pt-2"><span className="text-slate-400">HOSTS / PORTS:</span><span className="text-amber-300">{evidence.unique_destination_hosts ?? "N/A"} / {evidence.unique_destination_ports ?? "N/A"}</span></div><div className="col-span-2 flex justify-between"><span className="text-slate-400">FAN-OUT 10s / 60s:</span><span className="text-amber-300">{evidence.window_10s_fan_out ?? "N/A"} / {evidence.window_60s_fan_out ?? "N/A"}</span></div></>}
+              {isExfiltration && <div className="col-span-2 flex justify-between border-t border-cyan-500/10 pt-2"><span className="text-slate-400">TOTAL UPLOADED:</span><span className="text-amber-300">{formatBytes(evidence.total_uploaded_bytes)}</span></div>}
             </div>
           </div>
 
@@ -206,7 +231,7 @@ export function ForensicDrawer({ alert, onClose }: ForensicDrawerProps) {
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-1.5 text-[11px] font-mono text-slate-400">
                 <Fingerprint className="h-3.5 w-3.5 text-cyan-400" />
-                <span>CRYPTOGRAPHIC JA3 HASH</span>
+                <span>CRYPTOGRAPHIC FINGERPRINTS</span>
               </div>
               {evidence.ja3_hash && (
                 <Button
@@ -221,8 +246,11 @@ export function ForensicDrawer({ alert, onClose }: ForensicDrawerProps) {
             </div>
 
             <div className="p-2 rounded bg-slate-950/80 border border-slate-800 font-mono text-[11px] break-all text-cyan-200">
-              {evidence.ja3_hash ? evidence.ja3_hash : "No TLS ClientHello captured (cleartext or UDP flow)"}
+              JA3: {evidence.ja3_hash ?? "N/A"}<br />
+              JA4: {evidence.ja4_hash ?? "N/A"}<br />
+              SNI: {evidence.sni ?? "N/A"}
             </div>
+            {isMalware && (evidence.splt_packet_sizes || evidence.splt_interarrival_times) && <div className="p-2 rounded bg-slate-950/80 border border-slate-800 font-mono text-[10px] text-cyan-200">SPLT sizes: {JSON.stringify(evidence.splt_packet_sizes ?? [])}<br />SPLT IAT: {JSON.stringify(evidence.splt_interarrival_times ?? [])}</div>}
           </div>
 
           {/* Session Metadata */}
@@ -239,6 +267,8 @@ export function ForensicDrawer({ alert, onClose }: ForensicDrawerProps) {
               <span className="text-slate-400">CONFIDENCE:</span>
               <span className="text-emerald-400 font-semibold">{alert.confidence_score.toFixed(2)} / 1.00</span>
             </div>
+            <div className="flex justify-between py-0.5 border-b border-slate-800/40"><span className="text-slate-400">PROCESSING LATENCY:</span><span className="text-slate-200">{alert.processing_latency_ms?.toFixed(2) ?? "N/A"} ms</span></div>
+            <div className="flex justify-between py-0.5"><span className="text-slate-400">INGEST LATENCY:</span><span className="text-slate-200">{alert.ingest_latency_ms?.toFixed(2) ?? "N/A"} ms</span></div>
           </div>
 
           {/* Raw Evidence JSON Viewer */}

@@ -246,6 +246,10 @@ class SyntheticFlowGenerator:
             "dns_query": None,
             "dns_query_type": None,
             "ja3_hash": ja3,
+            "ja4_hash": f"t13d{ja3[:12]}",
+            "sni": dst_ip,
+            "splt_packet_sizes": [64, 128, 512, 1024, 256],
+            "splt_interarrival_times": [0.012, 0.031, 0.008, 0.044],
             "malware_family": malware_family,
             "simulated_label": "Encrypted Malware",
         }

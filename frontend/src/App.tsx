@@ -6,6 +6,8 @@ import {
 } from "hugeicons-react";
 import { Navbar } from "@/components/Navbar";
 import { ThroughputGauge, TrafficWindow } from "@/components/ThroughputGauge";
+import { SystemHealthPanel } from "@/components/SystemHealthPanel";
+import { ThreatTrends } from "@/components/ThreatTrends";
 import { ThreatTable } from "@/components/ThreatTable";
 import { ForensicDrawer } from "@/components/ForensicDrawer";
 import { Card, CardContent } from "@/components/ui/card";
@@ -173,6 +175,10 @@ export function App() {
           selectedWindow={selectedTrafficWindow}
           onWindowSelect={handleTrafficWindowSelect}
         />
+
+        <SystemHealthPanel />
+
+        <ThreatTrends />
 
         {/* Live Threat Alert Stream Table */}
         <ThreatTable

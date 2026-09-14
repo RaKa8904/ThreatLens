@@ -7,7 +7,7 @@ sliding-window anomaly detection, and threat alert serialization.
 
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Optional
+from typing import List, Optional
 from pydantic import BaseModel, Field, ConfigDict
 
 
@@ -52,6 +52,25 @@ class EvidenceSchema(BaseModel):
         default=None,
         description="JA3 TLS client fingerprint hash (32-character hex) if TLS flow",
     )
+    ja4_hash: Optional[str] = Field(default=None, description="JA4 TLS fingerprint if available")
+    sni: Optional[str] = Field(default=None, description="TLS Server Name Indication")
+    splt_packet_sizes: Optional[List[int]] = Field(default=None, description="SPLT packet-size sequence")
+    splt_interarrival_times: Optional[List[float]] = Field(default=None, description="SPLT inter-arrival sequence")
+    fft_concentration: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    beacon_period_seconds: Optional[float] = Field(default=None, ge=0.0)
+    inter_arrival_stddev: Optional[float] = Field(default=None, ge=0.0)
+    dns_query: Optional[str] = None
+    dns_query_length: Optional[int] = Field(default=None, ge=0)
+    dns_query_type: Optional[str] = None
+    ngram_score: Optional[float] = Field(default=None, ge=0.0)
+    packets_per_second: Optional[float] = Field(default=None, ge=0.0)
+    z_score: Optional[float] = None
+    source_ip_entropy: Optional[float] = Field(default=None, ge=0.0)
+    unique_destination_hosts: Optional[int] = Field(default=None, ge=0)
+    unique_destination_ports: Optional[int] = Field(default=None, ge=0)
+    window_10s_fan_out: Optional[int] = Field(default=None, ge=0)
+    window_60s_fan_out: Optional[int] = Field(default=None, ge=0)
+    total_uploaded_bytes: Optional[int] = Field(default=None, ge=0)
     details: str = Field(
         ...,
         description="Human-readable context and rationale for the triggered detection rule",
@@ -64,6 +83,7 @@ class EvidenceSchema(BaseModel):
     inbound_bytes: Optional[int] = Field(default=None, ge=0)
     outbound_bytes: Optional[int] = Field(default=None, ge=0)
     source_ip: Optional[str] = None
+    source_port: Optional[int] = Field(default=None, ge=0, le=65535)
     destination_ip: Optional[str] = None
     destination_port: Optional[int] = Field(default=None, ge=0, le=65535)
     protocol: Optional[str] = None
@@ -97,6 +117,11 @@ class ThreatAlertSchema(BaseModel):
         ...,
         description="Unique network flow identifier (e.g., 'src_ip:src_port->dst_ip:dst_port')",
     )
+    source_ip: Optional[str] = None
+    source_port: Optional[int] = Field(default=None, ge=0, le=65535)
+    destination_ip: Optional[str] = None
+    destination_port: Optional[int] = Field(default=None, ge=0, le=65535)
+    protocol: Optional[str] = None
     threat_class: ThreatClassEnum = Field(
         ...,
         description="Classified threat category",
@@ -107,6 +132,8 @@ class ThreatAlertSchema(BaseModel):
         ge=0.0,
         le=1.0,
     )
+    ingest_latency_ms: Optional[float] = Field(default=None, ge=0.0)
+    processing_latency_ms: Optional[float] = Field(default=None, ge=0.0)
     evidence: EvidenceSchema = Field(
         ...,
         description="Structured forensic evidence supporting the alert classification",

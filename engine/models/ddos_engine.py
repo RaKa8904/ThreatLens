@@ -95,6 +95,9 @@ class DDoSEngine(BaseDetectionEngine):
                 inbound_connections=syn_count,
                 outbound_connections=0,
                 observation_window_seconds=window_metrics.get("window_sec", 10),
+                packets_per_second=effective_pps,
+                z_score=z_score,
+                source_ip_entropy=window_metrics.get("source_ip_entropy", event.get("source_ip_entropy")),
             )
 
         return None

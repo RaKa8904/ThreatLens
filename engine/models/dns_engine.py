@@ -53,6 +53,8 @@ class DNSEngine(BaseDetectionEngine):
         entropies = [calculate_shannon_entropy(lbl) for lbl in labels_to_check]
         max_entropy = max(entropies) if entropies else 0.0
         query_len = len(domain)
+        bigrams = [domain[index:index + 2] for index in range(max(0, query_len - 1))]
+        ngram_score = len(set(bigrams)) / max(len(bigrams), 1)
 
         # Trigger conditions:
         # 1. High-entropy DGA domain (H >= 3.80 bits)
@@ -86,6 +88,10 @@ class DNSEngine(BaseDetectionEngine):
                 fan_out_count=1,
                 ja3_hash=None,
                 details=details,
+                dns_query=domain,
+                dns_query_length=query_len,
+                dns_query_type=query_type,
+                ngram_score=round(ngram_score, 4),
             )
 
         return None

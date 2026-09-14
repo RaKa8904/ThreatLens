@@ -177,6 +177,11 @@ class ClickHouseAlertStore:
                         ThreatAlertSchema(
                             timestamp=ts if isinstance(ts, datetime) else datetime.fromisoformat(str(ts)),
                             flow_id=f_id,
+                            source_ip=ev_dict.get("source_ip"),
+                            source_port=ev_dict.get("source_port"),
+                            destination_ip=ev_dict.get("destination_ip"),
+                            destination_port=ev_dict.get("destination_port"),
+                            protocol=ev_dict.get("protocol"),
                             threat_class=ThreatClassEnum(t_class),
                             confidence_score=float(conf),
                             evidence=EvidenceSchema(**ev_dict),
