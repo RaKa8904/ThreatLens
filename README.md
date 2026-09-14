@@ -174,11 +174,14 @@ ThreatLens/
 │       ├── test_api.py             # FastAPI REST & WebSocket endpoint integration tests (TestClient)
 │       ├── test_engines.py         # Multi-model detection engines and pipeline integration tests
 │       ├── test_features.py        # Statistical metrics, Shannon entropy, and SlidingWindowStore tests
-│       └── test_pcap_replay.py     # Zeek JSON normalization, UID correlation & PCAP replay attack validation
+│       ├── test_pcap_replay.py     # Zeek JSON normalization, UID correlation & PCAP replay attack validation
+│       └── test_runtime_config.py  # Runtime threshold/suppression config: validation, persistence & suppression integration
 ├── engine/
 │   ├── __init__.py
+│   ├── config.py                   # Authoritative detector threshold values, specs & live-read accessors
 │   ├── kafka_consumer.py           # KafkaIngestConsumer: Redpanda telemetry subscriber & pipeline dispatcher
 │   ├── pipeline.py                 # DetectionPipeline orchestrator & process_flow_event callable entrypoint
+│   ├── runtime_config.py           # RuntimeConfigStore: Redis-mirrored threshold overrides & analyst suppression rules
 │   ├── features/
 │   │   ├── __init__.py
 │   │   ├── metrics.py              # Shannon entropy, flow ratio, IAT variance, and fan-out calculators
@@ -206,6 +209,7 @@ ThreatLens/
 │       ├── index.css               # Global styles, dark tokens, and customized SOC scrollbars
 │       ├── main.tsx                # React DOM root entrypoint
 │       ├── components/
+│       │   ├── DetectionConfig.tsx # Slide-over rule management: runtime thresholds & suppression rule CRUD
 │       │   ├── ForensicDrawer.tsx  # Slide-over forensic sheet: telemetry metrics, JA3 copy & raw JSON viewer
 │       │   ├── Navbar.tsx          # Brand header: live stream pulse pill, real-time UTC clock & freeze toggle
 │       │   ├── ThreatTable.tsx     # High-density alert table: severity badges, progress bars, search & filters

@@ -5,10 +5,11 @@ Standardized Pydantic v2 data models for real-time telemetry,
 sliding-window anomaly detection, and threat alert serialization.
 """
 
+import ipaddress
 from datetime import datetime, timezone
 from enum import Enum
-from typing import List, Literal, Optional
-from pydantic import BaseModel, Field, ConfigDict
+from typing import Any, List, Literal, Optional
+from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 
 
 class ThreatClassEnum(str, Enum):
@@ -41,22 +42,131 @@ class AnalystNoteSchema(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+def _validated_ip_criterion(value: Optional[str]) -> Optional[str]:
+    """Accepts an IPv4/IPv6 address or CIDR network. None passes through."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("must be a string IP address or CIDR network")
+    criterion = value.strip()
+    if not criterion:
+        raise ValueError("must not be empty")
+    try:
+        ipaddress.ip_network(criterion, strict=False)
+    except ValueError:
+        raise ValueError(f"{value!r} is not a valid IP address or CIDR network")
+    return criterion
+
+
+def _as_utc(value: Optional[datetime]) -> Optional[datetime]:
+    """Coerces an optional timestamp to timezone-aware UTC."""
+    if value is None:
+        return None
+    return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+
+
 class SuppressionRule(BaseModel):
     id: str
     rule_type: Literal["source_ip", "destination_ip", "source_ip_threat_class"]
+    description: Optional[str] = Field(default=None, max_length=500)
     source_ip: Optional[str] = None
     destination_ip: Optional[str] = None
     threat_class: Optional[ThreatClassEnum] = None
+    enabled: bool = True
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     expires_at: Optional[datetime] = None
+
+    @field_validator("source_ip", "destination_ip")
+    @classmethod
+    def validate_ip_criteria(cls, value: Optional[str]) -> Optional[str]:
+        return _validated_ip_criterion(value)
+
+    @field_validator("expires_at")
+    @classmethod
+    def validate_expiry(cls, value: Optional[datetime]) -> Optional[datetime]:
+        return _as_utc(value)
+
+    @model_validator(mode="after")
+    def validate_target(self) -> "SuppressionRule":
+        if self.rule_type in ("source_ip", "source_ip_threat_class") and not self.source_ip:
+            raise ValueError(f"rule_type '{self.rule_type}' requires source_ip")
+        if self.rule_type == "destination_ip" and not self.destination_ip:
+            raise ValueError("rule_type 'destination_ip' requires destination_ip")
+        return self
 
 
 class SuppressionRuleCreate(BaseModel):
     rule_type: Literal["source_ip", "destination_ip", "source_ip_threat_class"]
+    description: Optional[str] = Field(default=None, max_length=500)
     source_ip: Optional[str] = None
     destination_ip: Optional[str] = None
     threat_class: Optional[ThreatClassEnum] = None
+    enabled: bool = True
     expires_at: Optional[datetime] = None
+
+    @field_validator("source_ip", "destination_ip")
+    @classmethod
+    def validate_ip_criteria(cls, value: Optional[str]) -> Optional[str]:
+        return _validated_ip_criterion(value)
+
+    @field_validator("expires_at")
+    @classmethod
+    def validate_expiry(cls, value: Optional[datetime]) -> Optional[datetime]:
+        return _as_utc(value)
+
+    @model_validator(mode="after")
+    def validate_target(self) -> "SuppressionRuleCreate":
+        if self.rule_type in ("source_ip", "source_ip_threat_class") and not self.source_ip:
+            raise ValueError(f"rule_type '{self.rule_type}' requires source_ip")
+        if self.rule_type == "destination_ip" and not self.destination_ip:
+            raise ValueError("rule_type 'destination_ip' requires destination_ip")
+        return self
+
+
+class ThresholdEntry(BaseModel):
+    """One analyst-configurable detector threshold with its metadata and live value."""
+
+    rule: str
+    rule_label: str
+    parameter: str
+    label: str
+    description: str
+    kind: Literal["int", "float", "int_list"]
+    min: Optional[float] = None
+    max: Optional[float] = None
+    value: Any
+    default: Any
+    modified: bool
+    consumed_by: str
+    active: bool
+
+
+class ThresholdConfigResponse(BaseModel):
+    """
+    Runtime threshold configuration.
+
+    `persistent` is False when the configuration store has no durable backend, in
+    which case changes apply immediately but are lost on restart.
+    """
+
+    storage_mode: Literal["redis", "memory"]
+    persistent: bool
+    thresholds: List[ThresholdEntry]
+
+
+class ThresholdUpdateRequest(BaseModel):
+    """A single threshold change. The value is validated against its rule spec."""
+
+    rule: str = Field(..., min_length=1, max_length=64)
+    parameter: str = Field(..., min_length=1, max_length=64)
+    value: Any
+
+
+class ThresholdResetResponse(BaseModel):
+    storage_mode: Literal["redis", "memory"]
+    persistent: bool
+    thresholds: List[ThresholdEntry]
 
 
 class EvidenceSchema(BaseModel):
@@ -174,7 +284,17 @@ class ThreatAlertSchema(BaseModel):
     )
     status: AlertStatusEnum = AlertStatusEnum.NEW
     incident_id: Optional[str] = None
-    suppressed: bool = False
+    suppressed: bool = Field(
+        default=False,
+        description=(
+            "True when an analyst suppression rule matched. The detection is still "
+            "recorded with full evidence; only analyst delivery is withheld."
+        ),
+    )
+    suppression_rule_id: Optional[str] = Field(
+        default=None,
+        description="Id of the suppression rule that withheld this alert, when suppressed.",
+    )
     source: Literal["live", "replay"] = "live"
     ingest_latency_ms: Optional[float] = Field(default=None, ge=0.0)
     processing_latency_ms: Optional[float] = Field(default=None, ge=0.0)

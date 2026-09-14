@@ -17,21 +17,34 @@ import logging
 import os
 import queue
 import time
+import uuid
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, Query, Response, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.app.schemas import AnalystNoteCreate, AnalystNoteSchema, AlertStatusEnum, SuppressionRule, SuppressionRuleCreate, ThreatAlertSchema, ThreatClassEnum
+from backend.app.schemas import (
+    AnalystNoteCreate,
+    AnalystNoteSchema,
+    AlertStatusEnum,
+    SuppressionRule,
+    SuppressionRuleCreate,
+    ThreatAlertSchema,
+    ThreatClassEnum,
+    ThresholdConfigResponse,
+    ThresholdResetResponse,
+    ThresholdUpdateRequest,
+)
 from backend.app.storage import ClickHouseAlertStore
 from backend.app.websocket_manager import ConnectionManager
 from engine.features.store import SlidingWindowStore
 from engine.kafka_consumer import KafkaIngestConsumer
 from engine.models.aggregator import AlertAggregator
 from engine.pipeline import DetectionPipeline
+from engine.config import describe_thresholds, get_threshold
+from engine.runtime_config import RuntimeConfigStore
 from ingest.producers.mock_producer import SyntheticFlowGenerator
 from ingest.producers.zeek_kafka_shipper import ZeekLogShipper
-from engine.config import THRESHOLDS
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -41,7 +54,9 @@ ws_manager = ConnectionManager()
 alert_store = ClickHouseAlertStore(auto_connect=True)
 window_store = SlidingWindowStore(use_redis=True)
 alert_aggregator = AlertAggregator()
-pipeline = DetectionPipeline(store=window_store, aggregator=alert_aggregator, suppression_provider=alert_store)
+runtime_config = RuntimeConfigStore()
+runtime_config.load()
+pipeline = DetectionPipeline(store=window_store, aggregator=alert_aggregator, suppression_provider=runtime_config)
 flow_generator = SyntheticFlowGenerator(seed=int(time.time()))
 replay_state: Dict[str, Any] = {"status": "idle", "path": None, "processed_alerts": 0, "error": None}
 
@@ -339,10 +354,58 @@ def get_incidents(limit: int = Query(100, ge=1, le=500)):
     return sorted(grouped.values(), key=lambda item: item["last_seen"], reverse=True)[:limit]
 
 
-@app.get("/api/config/thresholds", response_model=Dict[str, Any], tags=["System"])
+@app.get("/api/config/thresholds", response_model=ThresholdConfigResponse, tags=["Detection Configuration"])
 def get_detection_thresholds():
-    """Returns the read-only environment-backed detector threshold configuration."""
-    return THRESHOLDS
+    """
+    Returns every analyst-configurable detector threshold with its live value,
+    valid range, controlling rule, and the engine that consumes it.
+    """
+    return ThresholdConfigResponse(
+        storage_mode=runtime_config.storage_mode,
+        persistent=runtime_config.persistent,
+        thresholds=describe_thresholds(),
+    )
+
+
+@app.put("/api/config/thresholds", response_model=ThresholdConfigResponse, tags=["Detection Configuration"])
+def update_detection_threshold(payload: ThresholdUpdateRequest):
+    """
+    Applies a single threshold change. The new value takes effect on the next
+    detector evaluation; no container restart is required.
+    """
+    try:
+        previous = get_threshold(payload.rule, payload.parameter)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Unknown threshold rule '{payload.rule}'")
+
+    try:
+        entry = runtime_config.set_threshold(payload.rule, payload.parameter, payload.value)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Unknown threshold rule '{payload.rule}'")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    logger.info(
+        "AUDIT threshold_change rule=%s parameter=%s old=%r new=%r consumed_by=%s persistent=%s",
+        entry["rule"], entry["parameter"], previous, entry["value"],
+        entry["consumed_by"], runtime_config.persistent,
+    )
+    return ThresholdConfigResponse(
+        storage_mode=runtime_config.storage_mode,
+        persistent=runtime_config.persistent,
+        thresholds=describe_thresholds(),
+    )
+
+
+@app.post("/api/config/thresholds/reset", response_model=ThresholdResetResponse, tags=["Detection Configuration"])
+def reset_detection_thresholds():
+    """Restores every threshold to its environment-derived baseline."""
+    logger.info("AUDIT threshold_reset persistent=%s", runtime_config.persistent)
+    return ThresholdResetResponse(
+        storage_mode=runtime_config.storage_mode,
+        persistent=runtime_config.persistent,
+        thresholds=runtime_config.reset_thresholds(),
+    )
 
 
 @app.get("/api/export/iocs", tags=["Export"])
@@ -436,22 +499,37 @@ def get_alert_trends(
     }
 
 
-@app.post("/api/suppression-rules", response_model=SuppressionRule, tags=["Suppression"])
-def create_suppression_rule(rule: SuppressionRuleCreate):
-    import uuid
-    return alert_store.create_suppression_rule(SuppressionRule(id=str(uuid.uuid4()), **rule.model_dump()))
-
-
-@app.get("/api/suppression-rules", response_model=List[SuppressionRule], tags=["Suppression"])
+@app.get("/api/config/suppressions", response_model=List[SuppressionRule], tags=["Detection Configuration"])
 def list_suppression_rules():
-    return alert_store.get_suppression_rules()
+    """Lists analyst suppression rules, newest first."""
+    rules = runtime_config.get_suppression_rules()
+    return sorted(rules, key=lambda rule: rule.created_at, reverse=True)
 
 
-@app.delete("/api/suppression-rules/{rule_id}", tags=["Suppression"])
+@app.post("/api/config/suppressions", response_model=SuppressionRule, status_code=201, tags=["Detection Configuration"])
+def create_suppression_rule(rule: SuppressionRuleCreate):
+    """
+    Creates a suppression rule. Matching alerts are still detected and persisted
+    with full evidence; only delivery to the analyst console is withheld.
+    """
+    created = runtime_config.create_suppression_rule(
+        SuppressionRule(id=str(uuid.uuid4()), **rule.model_dump())
+    )
+    logger.info(
+        "AUDIT suppression_added id=%s type=%s source=%s destination=%s threat_class=%s enabled=%s persistent=%s",
+        created.id, created.rule_type, created.source_ip, created.destination_ip,
+        created.threat_class.value if created.threat_class else None,
+        created.enabled, runtime_config.persistent,
+    )
+    return created
+
+
+@app.delete("/api/config/suppressions/{rule_id}", tags=["Detection Configuration"])
 def delete_suppression_rule(rule_id: str):
-    from fastapi import HTTPException
-    if not alert_store.delete_suppression_rule(rule_id):
+    """Deletes a suppression rule by id."""
+    if not runtime_config.delete_suppression_rule(rule_id):
         raise HTTPException(status_code=404, detail="Suppression rule not found")
+    logger.info("AUDIT suppression_removed id=%s persistent=%s", rule_id, runtime_config.persistent)
     return {"deleted": True, "id": rule_id}
 
 

@@ -6,9 +6,10 @@ Defines the base contract and result schema for modular threat detection engines
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from backend.app.schemas import EvidenceSchema, ThreatClassEnum
+from engine.config import get_threshold
 
 
 @dataclass
@@ -88,6 +89,26 @@ class DetectionCandidate:
 
 class BaseDetectionEngine(ABC):
     """Abstract base class for all ThreatLens specialized detection engines."""
+
+    #: Key into engine.config.THRESHOLDS for this engine's tunable parameters.
+    threshold_rule: str = ""
+
+    def __init__(self, **overrides: Any):
+        """
+        Stores explicit per-instance threshold overrides.
+
+        Values are intentionally NOT resolved here. `threshold()` reads the live
+        configuration on every call so runtime updates take effect immediately.
+        """
+        self._threshold_overrides: Dict[str, Any] = {
+            key: value for key, value in overrides.items() if value is not None
+        }
+
+    def threshold(self, parameter: str) -> Any:
+        """Returns an explicit override if set, else the current live threshold."""
+        if parameter in self._threshold_overrides:
+            return self._threshold_overrides[parameter]
+        return get_threshold(self.threshold_rule, parameter)
 
     @property
     @abstractmethod

@@ -39,9 +39,16 @@ class DetectionPipeline:
         except ValueError:
             return value == criterion
 
-    def _is_suppressed(self, alert: ThreatAlertSchema) -> bool:
+    def _matching_suppression_rule(self, alert: ThreatAlertSchema):
+        """
+        Returns the first enabled suppression rule matching this alert, else None.
+
+        Suppression is evaluated after detection: engines have already produced
+        their evidence, and the resulting alert is still persisted. Only analyst
+        delivery is withheld.
+        """
         if self.suppression_provider is None:
-            return False
+            return None
         for rule in self.suppression_provider.get_active_suppression_rules():
             if rule.expires_at and rule.expires_at <= datetime.now(timezone.utc):
                 continue
@@ -49,12 +56,12 @@ class DetectionPipeline:
             destination_match = bool(alert.destination_ip and rule.destination_ip and self._ip_matches(alert.destination_ip, rule.destination_ip))
             class_match = not rule.threat_class or alert.threat_class == rule.threat_class
             if rule.rule_type == "source_ip" and source_match:
-                return True
+                return rule
             if rule.rule_type == "destination_ip" and destination_match:
-                return True
+                return rule
             if rule.rule_type == "source_ip_threat_class" and source_match and class_match:
-                return True
-        return False
+                return rule
+        return None
 
     def ingest_to_store(self, event: dict) -> None:
         """Updates rolling sliding windows with current flow event telemetry."""
@@ -119,7 +126,21 @@ class DetectionPipeline:
         # Step 2: Evaluate detection engines via AlertAggregator
         alerts = self.aggregator.aggregate(event, self.store)
 
-        return [alert.model_copy(update={"suppressed": self._is_suppressed(alert)}) for alert in alerts]
+        # Step 3: Evaluate analyst suppression rules. Detection evidence is already
+        # computed and the alert is still returned (and persisted upstream); the
+        # rule match is recorded so delivery can be withheld without hiding that
+        # a detection occurred.
+        suppressed: List[ThreatAlertSchema] = []
+        for alert in alerts:
+            rule = self._matching_suppression_rule(alert)
+            if rule is None:
+                suppressed.append(alert)
+            else:
+                suppressed.append(alert.model_copy(update={
+                    "suppressed": True,
+                    "suppression_rule_id": rule.id,
+                }))
+        return suppressed
 
     async def async_process_flow_event(self, event: dict) -> List[ThreatAlertSchema]:
         """Asynchronous wrapper for non-blocking event loop execution."""

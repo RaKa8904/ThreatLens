@@ -10,7 +10,6 @@ from typing import Optional
 from backend.app.schemas import ThreatClassEnum
 from engine.features.metrics import calculate_flow_ratio
 from engine.models.base import BaseDetectionEngine, DetectionCandidate
-from engine.config import THRESHOLDS
 
 
 class ExfiltrationEngine(BaseDetectionEngine):
@@ -19,14 +18,17 @@ class ExfiltrationEngine(BaseDetectionEngine):
     Evaluates outbound-to-inbound byte ratios, large payload egress, and continuous upload sessions.
     """
 
+    threshold_rule = "exfiltration"
+
     def __init__(
         self,
         min_egress_bytes: Optional[int] = None,
         min_ratio_threshold: Optional[float] = None,
     ):
-        config = THRESHOLDS["exfiltration"]
-        self.min_egress_bytes = min_egress_bytes if min_egress_bytes is not None else config["min_egress_bytes"]
-        self.min_ratio_threshold = min_ratio_threshold if min_ratio_threshold is not None else config["min_ratio_threshold"]
+        super().__init__(
+            min_egress_bytes=min_egress_bytes,
+            min_ratio_threshold=min_ratio_threshold,
+        )
 
     @property
     def threat_class(self) -> ThreatClassEnum:
@@ -40,6 +42,12 @@ class ExfiltrationEngine(BaseDetectionEngine):
         bytes_in = event.get("bytes_in", 0)
         timestamp = event.get("timestamp")
 
+        # Resolve live thresholds per evaluation so runtime changes apply immediately
+        min_egress_bytes = self.threshold("min_egress_bytes")
+        min_ratio_threshold = self.threshold("min_ratio_threshold")
+        massive_upload_bytes = self.threshold("massive_upload_bytes")
+        massive_upload_ratio = self.threshold("massive_upload_ratio")
+
         # Ingest state from 300s window if available
         m300 = store.get_300s_metrics(flow_id, current_time=timestamp) if store else {}
         total_out = max(bytes_out, m300.get("total_bytes_out", 0))
@@ -51,8 +59,8 @@ class ExfiltrationEngine(BaseDetectionEngine):
         # 1. Heavy asymmetric egress: outbound bytes >= 1MB and ratio >= 20.0
         # 2. Massive single flow upload (>= 5MB)
         # 3. Explicit Data Exfiltration simulation
-        is_asymmetric_leak = total_out >= self.min_egress_bytes and flow_ratio >= self.min_ratio_threshold
-        is_massive_upload = total_out >= THRESHOLDS["exfiltration"]["massive_upload_bytes"] and flow_ratio >= THRESHOLDS["exfiltration"]["massive_upload_ratio"]
+        is_asymmetric_leak = total_out >= min_egress_bytes and flow_ratio >= min_ratio_threshold
+        is_massive_upload = total_out >= massive_upload_bytes and flow_ratio >= massive_upload_ratio
         is_simulated = (
             event.get("simulated_label") == "Data Exfiltration"
             and bytes_out >= 500_000

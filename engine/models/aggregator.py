@@ -20,7 +20,7 @@ from engine.models.dns_engine import DNSEngine
 from engine.models.exfiltration_engine import ExfiltrationEngine
 from engine.models.malware_engine import EncryptedMalwareEngine
 from engine.models.recon_engine import ReconEngine
-from engine.config import THRESHOLDS
+from engine.config import get_threshold
 
 logger = logging.getLogger(__name__)
 
@@ -43,9 +43,13 @@ class AlertAggregator:
                 ExfiltrationEngine(),
             ]
         self.max_workers = max_workers
-        self.correlation_window_seconds = THRESHOLDS["correlation"]["window_seconds"]
         self._source_incidents: dict[str, tuple[float, str]] = {}
         self._correlation_lock = threading.Lock()
+
+    @property
+    def correlation_window_seconds(self) -> float:
+        """Reads the live correlation window so runtime changes apply immediately."""
+        return get_threshold("correlation", "window_seconds")
 
     def _incident_id_for_source(self, source_ip: Optional[str], timestamp: float) -> Optional[str]:
         if not source_ip:

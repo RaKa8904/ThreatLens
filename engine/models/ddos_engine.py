@@ -9,7 +9,6 @@ from typing import Optional
 
 from backend.app.schemas import ThreatClassEnum
 from engine.features.metrics import calculate_flow_ratio, calculate_shannon_entropy
-from engine.config import THRESHOLDS
 from engine.models.base import BaseDetectionEngine, DetectionCandidate
 
 
@@ -19,6 +18,8 @@ class DDoSEngine(BaseDetectionEngine):
     Evaluates packet-per-second (PPS) rates, SYN flag concentration, and UDP bursts.
     """
 
+    threshold_rule = "ddos"
+
     def __init__(
         self,
         baseline_pps_mean: Optional[float] = None,
@@ -26,11 +27,12 @@ class DDoSEngine(BaseDetectionEngine):
         sigma_threshold: Optional[float] = None,
         syn_ratio_threshold: Optional[float] = None,
     ):
-        config = THRESHOLDS["ddos"]
-        self.baseline_mean = baseline_pps_mean if baseline_pps_mean is not None else config["baseline_pps_mean"]
-        self.baseline_std = max(baseline_pps_std if baseline_pps_std is not None else config["baseline_pps_std"], 1.0)
-        self.sigma_threshold = sigma_threshold if sigma_threshold is not None else config["sigma_threshold"]
-        self.syn_ratio_threshold = syn_ratio_threshold if syn_ratio_threshold is not None else config["syn_ratio_threshold"]
+        super().__init__(
+            baseline_pps_mean=baseline_pps_mean,
+            baseline_pps_std=baseline_pps_std,
+            sigma_threshold=sigma_threshold,
+            syn_ratio_threshold=syn_ratio_threshold,
+        )
 
     @property
     def threat_class(self) -> ThreatClassEnum:
@@ -55,6 +57,15 @@ class DDoSEngine(BaseDetectionEngine):
         protocol = event.get("protocol", "TCP")
         timestamp = event.get("timestamp")
 
+        # Resolve live thresholds per evaluation so runtime changes apply immediately
+        baseline_mean = self.threshold("baseline_pps_mean")
+        baseline_std = max(self.threshold("baseline_pps_std"), 1.0)
+        sigma_threshold = self.threshold("sigma_threshold")
+        syn_ratio_threshold = self.threshold("syn_ratio_threshold")
+        min_surge_pps = self.threshold("min_surge_pps")
+        min_udp_pps = self.threshold("min_udp_pps")
+        syn_packet_burst = self.threshold("syn_packet_burst")
+
         # Ingest state from 10s sliding window
         source_metrics = store.get_10s_metrics(src_ip, current_time=timestamp) if store else {}
         target_metrics = store.get_10s_metrics(f"target:{dst_ip}:{event.get('dst_port', 0)}", current_time=timestamp) if store else {}
@@ -69,7 +80,7 @@ class DDoSEngine(BaseDetectionEngine):
         self._update_ema_baseline(effective_pps)
 
         # 3-Sigma Z-Score calculation
-        z_score = (effective_pps - self.baseline_mean) / self.baseline_std
+        z_score = (effective_pps - baseline_mean) / baseline_std
 
         # SYN Flood Evaluation
         is_syn = "SYN" in flags and "ACK" not in flags
@@ -81,9 +92,9 @@ class DDoSEngine(BaseDetectionEngine):
         # 1. 3-Sigma PPS breach (Z > 3.0) with high volume
         # 2. Explicit massive packet burst with SYN flag (typical of SYN floods)
         # 3. High-velocity UDP burst with Z-score breach
-        is_surge = z_score >= self.sigma_threshold and effective_pps >= THRESHOLDS["ddos"]["min_surge_pps"]
-        is_syn_flood = inbound_dominant and ((is_syn and packets_in >= THRESHOLDS["ddos"]["syn_packet_burst"]) or (syn_ratio >= self.syn_ratio_threshold and effective_pps >= THRESHOLDS["ddos"]["min_surge_pps"]))
-        is_udp_storm = protocol == "UDP" and effective_pps >= THRESHOLDS["ddos"]["min_udp_pps"] and z_score >= self.sigma_threshold
+        is_surge = z_score >= sigma_threshold and effective_pps >= min_surge_pps
+        is_syn_flood = inbound_dominant and ((is_syn and packets_in >= syn_packet_burst) or (syn_ratio >= syn_ratio_threshold and effective_pps >= min_surge_pps))
+        is_udp_storm = protocol == "UDP" and effective_pps >= min_udp_pps and z_score >= sigma_threshold
 
         if inbound_dominant and (is_surge or is_syn_flood or is_udp_storm):
             # Normalize confidence score between 0.75 and 0.99 based on Z-score severity
@@ -98,7 +109,7 @@ class DDoSEngine(BaseDetectionEngine):
             attack_type = "Distributed SYN Flood" if is_syn_flood and source_count > 1 else ("SYN Flood / DoS" if is_syn_flood else ("UDP Storm" if is_udp_storm else "Volumetric PPS Surge"))
             details = (
                 f"{attack_type} detected targeting {dst_ip}: {effective_pps:.1f} PPS "
-                f"from {source_count} source(s) (Z-score={z_score:.2f} > {self.sigma_threshold:.1f}σ, SYN ratio={syn_ratio:.2f})."
+                f"from {source_count} source(s) (Z-score={z_score:.2f} > {sigma_threshold:.1f}σ, SYN ratio={syn_ratio:.2f})."
             )
 
             return DetectionCandidate(

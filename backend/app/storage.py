@@ -13,7 +13,7 @@ import os
 import threading
 from typing import Any, Dict, List, Optional
 
-from backend.app.schemas import AnalystNoteSchema, AlertStatusEnum, EvidenceSchema, SuppressionRule, ThreatAlertSchema, ThreatClassEnum
+from backend.app.schemas import AnalystNoteSchema, AlertStatusEnum, EvidenceSchema, ThreatAlertSchema, ThreatClassEnum
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +54,6 @@ class ClickHouseAlertStore:
         # In-memory circular buffer fallback (Thread-safe)
         self._memory_ring: deque[ThreatAlertSchema] = deque(maxlen=max_memory_buffer)
         self._status_overrides: Dict[str, AlertStatusEnum] = {}
-        self._suppression_rules: Dict[str, SuppressionRule] = {}
         self._lock = threading.Lock()
 
         if auto_connect:
@@ -283,23 +282,6 @@ class ClickHouseAlertStore:
                 logger.error("ClickHouse note query failed: %s", exc)
         with self._lock:
             return [note for note in getattr(self, "_notes", []) if note.flow_id == flow_id]
-
-    def create_suppression_rule(self, rule: SuppressionRule) -> SuppressionRule:
-        with self._lock:
-            self._suppression_rules[rule.id] = rule
-        return rule
-
-    def get_suppression_rules(self) -> List[SuppressionRule]:
-        with self._lock:
-            return list(self._suppression_rules.values())
-
-    def get_active_suppression_rules(self) -> List[SuppressionRule]:
-        now = datetime.now(timezone.utc)
-        return [rule for rule in self.get_suppression_rules() if not rule.expires_at or rule.expires_at > now]
-
-    def delete_suppression_rule(self, rule_id: str) -> bool:
-        with self._lock:
-            return self._suppression_rules.pop(rule_id, None) is not None
 
     def get_alert_count(self) -> int:
         """Returns total alerts recorded in ClickHouse or in-memory ring buffer."""

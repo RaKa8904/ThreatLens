@@ -104,15 +104,23 @@ Additional functional endpoints:
 - `GET /api/alerts?status=...`: lifecycle status filtering.
 - `POST/GET /api/alerts/{flow_id}/notes`: separate analyst commentary storage.
 - `GET /api/incidents`: source-IP correlated incident groups.
-- `GET /api/config/thresholds`: read-only environment-backed detector thresholds.
+- `GET`/`PUT /api/config/thresholds` and `POST /api/config/thresholds/reset`: analyst-tunable
+  detector thresholds with live values, valid ranges, and the engine consuming each parameter.
 - `GET /api/export/iocs?window_minutes=X&format=json|csv`: opt-in IOC export.
-- `POST /api/suppression-rules`, `GET`, and `DELETE`: suppression rule CRUD.
+- `GET`/`POST /api/config/suppressions` and `DELETE /api/config/suppressions/{id}`: suppression
+  rule CRUD. Matching detections are still evaluated and persisted; only analyst delivery is withheld.
 - `POST /api/replay/start` and `GET /api/replay/status`: isolated PCAP replay control.
 
 Alert lifecycle values are `new`, `acknowledged`, `investigating`, `resolved`, and
-`false_positive`. Alerts also carry optional `incident_id`, `suppressed`, and
-`source` (`live` or `replay`) fields; these are mirrored in the frontend TypeScript
+`false_positive`. Alerts also carry optional `incident_id`, `suppressed`, `suppression_rule_id`,
+and `source` (`live` or `replay`) fields; these are mirrored in the frontend TypeScript
 contract.
+
+Runtime configuration is held by `engine.runtime_config.RuntimeConfigStore`. Thresholds are read
+live from `engine.config.THRESHOLDS` on every evaluation, so a change applies to the next
+detection without restarting any process. Overrides and suppression rules are persisted to Redis
+when it is reachable; `GET /api/config/thresholds` reports `persistent: false` and
+`storage_mode: "memory"` when they are runtime-only and will be lost on restart.
 
 Replay isolation uses a separate in-memory `DetectionPipeline` and temporary Zeek
 log directory. Replayed alerts are archived with `source="replay"` and are not

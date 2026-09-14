@@ -10,7 +10,6 @@ from typing import Optional
 from backend.app.schemas import ThreatClassEnum
 from engine.features.metrics import calculate_flow_ratio, calculate_shannon_entropy
 from engine.models.base import BaseDetectionEngine, DetectionCandidate
-from engine.config import THRESHOLDS
 
 
 class ReconEngine(BaseDetectionEngine):
@@ -19,14 +18,17 @@ class ReconEngine(BaseDetectionEngine):
     Evaluates endpoint cardinality dispersion, destination port spreads, and probe profiles.
     """
 
+    threshold_rule = "reconnaissance"
+
     def __init__(
         self,
         min_target_cardinality: Optional[int] = None,
         max_probe_bytes: Optional[int] = None,
     ):
-        config = THRESHOLDS["reconnaissance"]
-        self.min_target_cardinality = min_target_cardinality if min_target_cardinality is not None else config["min_target_cardinality"]
-        self.max_probe_bytes = max_probe_bytes if max_probe_bytes is not None else config["max_probe_bytes"]
+        super().__init__(
+            min_target_cardinality=min_target_cardinality,
+            max_probe_bytes=max_probe_bytes,
+        )
 
     @property
     def threat_class(self) -> ThreatClassEnum:
@@ -42,6 +44,10 @@ class ReconEngine(BaseDetectionEngine):
         flags = event.get("flags", [])
         timestamp = event.get("timestamp")
 
+        # Resolve live thresholds per evaluation so runtime changes apply immediately
+        min_target_cardinality = self.threshold("min_target_cardinality")
+        max_probe_bytes = self.threshold("max_probe_bytes")
+
         # Ingest state from 10s and 60s sliding window
         m10 = store.get_10s_metrics(src_ip, current_time=timestamp) if store else {}
         m60 = store.get_60s_recon_metrics(src_ip, current_time=timestamp) if store else {}
@@ -52,7 +58,7 @@ class ReconEngine(BaseDetectionEngine):
 
         # Scanning profile heuristics: low byte count, small packets, SYN flag
         is_syn_probe = "SYN" in flags or bytes_in == 0
-        is_low_payload = bytes_out <= self.max_probe_bytes and packets_out <= 2
+        is_low_payload = bytes_out <= max_probe_bytes and packets_out <= 2
         is_probe_profile = is_syn_probe and is_low_payload
 
         # Trigger conditions:
@@ -61,13 +67,13 @@ class ReconEngine(BaseDetectionEngine):
         # 3. High 10s fan-out with probe profile
         # 4. Explicit reconnaissance label from synthetic generator
         cardinality = max(unique_ports, unique_ips, fan_out_10s)
-        is_cardinality_anomaly = cardinality >= self.min_target_cardinality and is_probe_profile
+        is_cardinality_anomaly = cardinality >= min_target_cardinality and is_probe_profile
         is_simulated = event.get("simulated_label") == "Reconnaissance Scan"
 
         if is_cardinality_anomaly or is_simulated:
             effective_cardinality = max(cardinality, 3)
             base_conf = 0.80
-            card_bonus = min(0.18, (effective_cardinality - self.min_target_cardinality) * 0.03)
+            card_bonus = min(0.18, (effective_cardinality - min_target_cardinality) * 0.03)
             confidence = min(0.98, base_conf + card_bonus)
 
             byte_ratio = calculate_flow_ratio(bytes_out, bytes_in)

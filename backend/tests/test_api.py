@@ -125,19 +125,26 @@ class TestFastAPIGateway(unittest.TestCase):
     def test_thresholds_health_ioc_and_suppression_endpoints(self):
         thresholds = self.client.get("/api/config/thresholds")
         self.assertEqual(thresholds.status_code, 200)
-        self.assertIn("ddos", thresholds.json())
+        body = thresholds.json()
+        self.assertIn(body["storage_mode"], ["redis", "memory"])
+        self.assertTrue(any(entry["rule"] == "ddos" for entry in body["thresholds"]))
 
         health = self.client.get("/api/health").json()
         self.assertIn(health["redis_status"], ["connected", "fallback_memory"])
         self.assertIn(health["clickhouse_status"], ["connected", "fallback_memory"])
 
-        rule = self.client.post("/api/suppression-rules", json={"rule_type": "source_ip", "source_ip": "192.168.1.0/24"})
-        self.assertEqual(rule.status_code, 200)
+        rule = self.client.post(
+            "/api/config/suppressions",
+            json={"rule_type": "source_ip", "source_ip": "192.168.1.0/24", "description": "Test rule"},
+        )
+        self.assertEqual(rule.status_code, 201)
         rule_id = rule.json()["id"]
-        listed = self.client.get("/api/suppression-rules")
+        self.assertTrue(rule.json()["enabled"])
+        listed = self.client.get("/api/config/suppressions")
         self.assertTrue(any(item["id"] == rule_id for item in listed.json()))
-        deleted = self.client.delete(f"/api/suppression-rules/{rule_id}")
+        deleted = self.client.delete(f"/api/config/suppressions/{rule_id}")
         self.assertEqual(deleted.status_code, 200)
+        self.assertEqual(self.client.delete(f"/api/config/suppressions/{rule_id}").status_code, 404)
 
         export = self.client.get("/api/export/iocs?window_minutes=60&format=json")
         self.assertEqual(export.status_code, 200)

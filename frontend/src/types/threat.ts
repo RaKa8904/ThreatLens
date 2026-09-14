@@ -81,6 +81,7 @@ export interface ThreatAlertSchema {
   status: AlertStatusEnum;
   incident_id?: string | null;
   suppressed: boolean;
+  suppression_rule_id?: string | null;
   source: "live" | "replay";
   ingest_latency_ms?: number | null;
   processing_latency_ms?: number | null;
@@ -96,11 +97,48 @@ export interface AnalystNote {
 export interface SuppressionRule {
   id: string;
   rule_type: "source_ip" | "destination_ip" | "source_ip_threat_class";
+  description?: string | null;
   source_ip?: string | null;
   destination_ip?: string | null;
   threat_class?: ThreatClassEnum | null;
+  enabled: boolean;
   created_at: string;
+  updated_at: string;
   expires_at?: string | null;
+}
+
+export interface SuppressionRuleCreate {
+  rule_type: SuppressionRule["rule_type"];
+  description?: string | null;
+  source_ip?: string | null;
+  destination_ip?: string | null;
+  threat_class?: ThreatClassEnum | null;
+  enabled?: boolean;
+  expires_at?: string | null;
+}
+
+/** One analyst-configurable detector threshold, with its valid range and consumer. */
+export interface ThresholdEntry {
+  rule: string;
+  rule_label: string;
+  parameter: string;
+  label: string;
+  description: string;
+  kind: "int" | "float" | "int_list";
+  min: number | null;
+  max: number | null;
+  value: number | number[];
+  default: number | number[];
+  modified: boolean;
+  consumed_by: string;
+  active: boolean;
+}
+
+export interface ThresholdConfigResponse {
+  /** "memory" means changes apply at runtime but are lost on restart. */
+  storage_mode: "redis" | "memory";
+  persistent: boolean;
+  thresholds: ThresholdEntry[];
 }
 
 // Aliases for convenience in dashboard components

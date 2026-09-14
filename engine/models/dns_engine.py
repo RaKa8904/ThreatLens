@@ -10,7 +10,6 @@ from typing import Optional
 from backend.app.schemas import ThreatClassEnum
 from engine.features.metrics import calculate_flow_ratio, calculate_shannon_entropy
 from engine.models.base import BaseDetectionEngine, DetectionCandidate
-from engine.config import THRESHOLDS
 
 
 class DNSEngine(BaseDetectionEngine):
@@ -19,14 +18,17 @@ class DNSEngine(BaseDetectionEngine):
     Evaluates domain lexical entropy, record size anomalies, and TXT/NULL tunneling.
     """
 
+    threshold_rule = "dns"
+
     def __init__(
         self,
         entropy_threshold: Optional[float] = None,
         tunnel_length_threshold: Optional[int] = None,
     ):
-        config = THRESHOLDS["dns"]
-        self.entropy_threshold = entropy_threshold if entropy_threshold is not None else config["entropy_threshold"]
-        self.tunnel_length_threshold = tunnel_length_threshold if tunnel_length_threshold is not None else config["tunnel_length_threshold"]
+        super().__init__(
+            entropy_threshold=entropy_threshold,
+            tunnel_length_threshold=tunnel_length_threshold,
+        )
 
     @property
     def threat_class(self) -> ThreatClassEnum:
@@ -44,6 +46,12 @@ class DNSEngine(BaseDetectionEngine):
 
         if not domain:
             return None
+
+        # Resolve live thresholds per evaluation so runtime changes apply immediately
+        entropy_threshold = self.threshold("entropy_threshold")
+        tunnel_length_threshold = self.threshold("tunnel_length_threshold")
+        txt_tunnel_length = self.threshold("txt_tunnel_length")
+        txt_entropy_threshold = self.threshold("txt_entropy_threshold")
 
         # Analyze full domain and primary subdomain label
         parts = domain.split(".")
@@ -74,14 +82,14 @@ class DNSEngine(BaseDetectionEngine):
         # 1. High-entropy DGA domain (H >= 3.80 bits) or extreme consonant ratio (>= 0.85)
         # 2. Large DNS tunneling query (> 60 characters or TXT payload > 45 chars)
         # 3. Encoded binary tunnel in TXT or NULL records
-        is_high_entropy = max_entropy >= self.entropy_threshold or (consonant_ratio >= 0.85 and len(subdomain) >= 12)
-        is_tunnel_length = query_len >= self.tunnel_length_threshold
-        is_txt_tunnel = query_type in ["TXT", "NULL"] and (query_len >= THRESHOLDS["dns"]["txt_tunnel_length"] or max_entropy >= THRESHOLDS["dns"]["txt_entropy_threshold"])
+        is_high_entropy = max_entropy >= entropy_threshold or (consonant_ratio >= 0.85 and len(subdomain) >= 12)
+        is_tunnel_length = query_len >= tunnel_length_threshold
+        is_txt_tunnel = query_type in ["TXT", "NULL"] and (query_len >= txt_tunnel_length or max_entropy >= txt_entropy_threshold)
 
         if is_high_entropy or is_tunnel_length or is_txt_tunnel:
             # Scale confidence from 0.78 up to 0.98
             base_conf = 0.80
-            entropy_bonus = min(0.12, max(0.0, (max_entropy - self.entropy_threshold) * 0.3))
+            entropy_bonus = min(0.12, max(0.0, (max_entropy - entropy_threshold) * 0.3))
             length_bonus = 0.06 if is_tunnel_length else 0.0
             type_bonus = 0.05 if query_type in ["TXT", "NULL"] else 0.0
             trigram_bonus = 0.03 if trigram_score > 0.80 else 0.0
@@ -91,7 +99,7 @@ class DNSEngine(BaseDetectionEngine):
             mechanism = "DNS Tunneling (TXT/Payload)" if (is_tunnel_length or is_txt_tunnel) else "DGA Generation"
             details = (
                 f"{mechanism} detected on query '{domain[:50]}': Shannon entropy={max_entropy:.2f} "
-                f"(threshold={self.entropy_threshold:.2f}), length={query_len} chars, record_type={query_type}."
+                f"(threshold={entropy_threshold:.2f}), length={query_len} chars, record_type={query_type}."
             )
 
             return DetectionCandidate(

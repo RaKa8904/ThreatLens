@@ -2,18 +2,22 @@ import { useEffect, useState } from "react";
 import {
   Shield01Icon as ShieldSecurity,
   Activity01Icon as Activity01,
+  Settings01Icon as Settings01,
 } from "hugeicons-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { ConnectionStatus } from "@/hooks/useThreatSocket";
 
 interface NavbarProps {
   status: ConnectionStatus;
   totalAlerts: number;
+  onOpenConfig?: () => void;
 }
 
 export function Navbar({
   status,
   totalAlerts,
+  onOpenConfig,
 }: NavbarProps) {
   const [utcTime, setUtcTime] = useState<string>("");
 
@@ -92,6 +96,19 @@ export function Navbar({
 
         {/* Right: Controls & Real-Time Clock */}
         <div className="flex items-center space-x-3">
+          {/* Detection configuration panel trigger */}
+          {onOpenConfig && (
+            <Button
+              variant="subtle"
+              size="sm"
+              onClick={onOpenConfig}
+              className="gap-1.5 font-mono text-[11px]"
+            >
+              <Settings01 className="h-3.5 w-3.5" />
+              RULES
+            </Button>
+          )}
+
           {/* Real-time UTC Clock */}
           <div className="hidden sm:flex items-center h-8 px-3 rounded-md bg-zinc-900/90 border border-zinc-800 text-zinc-300 font-mono text-xs tracking-wider">
             {utcTime || "00:00:00 UTC"}

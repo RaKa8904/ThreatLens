@@ -15,14 +15,15 @@ from engine.features.metrics import (
     calculate_shannon_entropy,
 )
 from engine.models.base import BaseDetectionEngine, DetectionCandidate
-from engine.config import THRESHOLDS
 
 
 class BeaconingEngine(BaseDetectionEngine):
     """
     Engine 2: Botnet C2 Beaconing Detection.
-    Evaluates periodicity, FFT harmonic concentration, and low IAT variance across 300s window.
+    Evaluates periodicity, harmonic concentration, and low IAT variance across 300s window.
     """
+
+    threshold_rule = "beaconing"
 
     def __init__(
         self,
@@ -30,10 +31,11 @@ class BeaconingEngine(BaseDetectionEngine):
         min_heartbeats: Optional[int] = None,
         min_period_seconds: Optional[float] = None,
     ):
-        config = THRESHOLDS["beaconing"]
-        self.max_variance_threshold = max_variance_threshold if max_variance_threshold is not None else config["max_variance_threshold"]
-        self.min_heartbeats = min_heartbeats if min_heartbeats is not None else config["min_heartbeats"]
-        self.min_period_seconds = min_period_seconds if min_period_seconds is not None else config["min_period_seconds"]
+        super().__init__(
+            max_variance_threshold=max_variance_threshold,
+            min_heartbeats=min_heartbeats,
+            min_period_seconds=min_period_seconds,
+        )
 
     @property
     def threat_class(self) -> ThreatClassEnum:
@@ -72,12 +74,17 @@ class BeaconingEngine(BaseDetectionEngine):
         bytes_out = event.get("bytes_out", 0)
         bytes_in = event.get("bytes_in", 0)
 
+        # Resolve live thresholds per evaluation so runtime changes apply immediately
+        max_variance_threshold = self.threshold("max_variance_threshold")
+        min_heartbeats = self.threshold("min_heartbeats")
+        min_period_seconds = self.threshold("min_period_seconds")
+
         # Use 300-second window metrics for this flow or IP pair
         target_key = flow_id or f"{src_ip}->{dst_ip}"
         metrics = store.get_300s_metrics(target_key, current_time=timestamp) if store else {}
 
         timestamps = metrics.get("timestamps", [])
-        if len(timestamps) < self.min_heartbeats:
+        if len(timestamps) < min_heartbeats:
             return None
 
         # Calculate consecutive intervals
@@ -97,12 +104,12 @@ class BeaconingEngine(BaseDetectionEngine):
         # Detection condition:
         # 1. Spaced intervals (mean period >= min_period_seconds, not bulk packets in one second)
         # 2. Ultra-low IAT variance (< 0.05), high harmonic concentration (> 0.85), or high autocorrelation (>= 0.70)
-        if mean_period >= self.min_period_seconds and (
-            iat_variance <= self.max_variance_threshold or fft_concentration >= 0.85 or autocorr >= 0.70
+        if mean_period >= min_period_seconds and (
+            iat_variance <= max_variance_threshold or fft_concentration >= 0.85 or autocorr >= 0.70
         ):
             # Confidence score scaled with periodicity consistency and sample count
             base_conf = 0.82
-            var_bonus = min(0.12, (self.max_variance_threshold - min(iat_variance, self.max_variance_threshold)) * 2.0)
+            var_bonus = min(0.12, (max_variance_threshold - min(iat_variance, max_variance_threshold)) * 2.0)
             sample_bonus = min(0.05, (len(timestamps) - 3) * 0.01)
             confidence = min(0.99, base_conf + var_bonus + sample_bonus)
 

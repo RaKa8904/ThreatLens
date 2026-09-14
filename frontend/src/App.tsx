@@ -6,6 +6,7 @@ import { IncidentsPanel } from "@/components/IncidentsPanel";
 import { ThreatTrends } from "@/components/ThreatTrends";
 import { ThreatTable } from "@/components/ThreatTable";
 import { ForensicDrawer } from "@/components/ForensicDrawer";
+import { DetectionConfig } from "@/components/DetectionConfig";
 import { useThreatSocket } from "@/hooks/useThreatSocket";
 import { ThreatAlertSchema } from "@/types/threat";
 
@@ -21,6 +22,7 @@ export function App() {
   const [archiveHasNext, setArchiveHasNext] = useState(false);
   const [severityFilter, setSeverityFilter] = useState<SeverityFilter>(null);
   const [selectedTrafficWindow, setSelectedTrafficWindow] = useState<TrafficWindow | null>(null);
+  const [configOpen, setConfigOpen] = useState(false);
 
   useEffect(() => {
     if (alertViewMode !== "archive") return;
@@ -105,6 +107,7 @@ export function App() {
       <Navbar
         status={status}
         totalAlerts={totalReceived}
+        onOpenConfig={() => setConfigOpen(true)}
       />
 
       {/* Main SOC Dashboard Viewport */}
@@ -201,6 +204,9 @@ export function App() {
         alert={selectedAlert}
         onClose={() => setSelectedAlert(null)}
       />
+
+      {/* Slide-over Detection Configuration & Rule Management */}
+      <DetectionConfig open={configOpen} onOpenChange={setConfigOpen} />
 
       {/* Global Footer */}
       <footer className="border-t border-zinc-800/80 bg-[#090d16] px-6 py-2.5 text-center text-[10px] font-mono text-zinc-400">
