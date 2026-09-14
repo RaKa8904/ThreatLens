@@ -25,11 +25,11 @@ export function IncidentsPanel() {
   }, []);
 
   return (
-    <Card className="border-zinc-800/80 bg-[#090d16]/80 backdrop-blur-xl">
+    <Card className="h-[600px] border-zinc-800/80 bg-[#090d16]/80 backdrop-blur-xl flex flex-col overflow-hidden">
       <CardHeader className="border-b border-zinc-800/60 py-3 px-4">
         <CardTitle className="text-[length:var(--text-heading)] uppercase font-mono tracking-wider text-zinc-300">Incidents</CardTitle>
       </CardHeader>
-      <CardContent className="p-3 space-y-2">
+      <CardContent className="min-h-0 flex-1 overflow-y-auto p-3 space-y-2">
         {incidents.length === 0 && <div className="font-mono text-[length:var(--text-label)] text-zinc-600">No correlated incidents.</div>}
         {incidents.map((incident) => (
           <div key={incident.incident_id} className="rounded border border-zinc-800/70 p-3 font-mono text-[11px]">

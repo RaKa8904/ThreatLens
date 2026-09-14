@@ -170,7 +170,7 @@ export function ThreatTable({
   });
 
   return (
-    <div className="rounded-xl border border-zinc-800/80 bg-[#090d16]/80 backdrop-blur-xl overflow-hidden flex flex-col">
+    <div className="h-[600px] rounded-xl border border-zinc-800/80 bg-[#090d16]/80 backdrop-blur-xl overflow-hidden flex flex-col">
       {/* Table Filter Controls Header */}
       <div className="p-3 border-b border-zinc-800/80 flex flex-wrap items-center justify-between gap-3 bg-[#090d16]">
         <div className="flex items-center space-x-2">
@@ -260,7 +260,7 @@ export function ThreatTable({
       </div>
 
       {/* Main Table */}
-      <div className="overflow-y-auto max-h-[520px]">
+      <div className="min-h-0 flex-1 overflow-y-auto">
         <Table>
           <TableHeader>
             <TableRow className="hover:bg-transparent border-b border-zinc-800/80">
