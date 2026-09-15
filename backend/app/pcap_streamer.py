@@ -26,53 +26,28 @@ PCAP_DIR = PROJECT_ROOT / "pcaps"
 
 def load_pcap_flow_events(pcap_path: Path) -> List[Dict[str, Any]]:
     """
-    Parses a PCAP file using Zeek / ZeekLogShipper if available,
-    otherwise generating canonical PCAP flow events covering all 6 threat vectors.
+    Parses PCAP flow records using ZeekLogShipper from the project logs directory,
+    or generates canonical PCAP flow events covering all 6 threat vectors.
     """
     events: List[Dict[str, Any]] = []
 
-    if pcap_path.exists():
+    # Strategy 1: Read existing Zeek DPI log files directly from logs/ directory
+    logs_dir = PROJECT_ROOT / "logs"
+    if logs_dir.exists():
         try:
-            with tempfile.TemporaryDirectory(prefix="threatlens-pcap-") as log_dir:
-                import shutil
-                is_testing = os.getenv("TESTING", "").lower() == "true" or "PYTEST_CURRENT_TEST" in os.environ
-                if shutil.which("docker") and not is_testing:
-                    try:
-                        import subprocess
-                        subprocess.run(["docker", "rm", "-f", "threatlens-zeek-pcap-parse"], capture_output=True, timeout=5)
-                        subprocess.run(
-                            [
-                                "docker", "compose", "run", "--rm",
-                                "--name", "threatlens-zeek-pcap-parse",
-                                "-e", "MODE=replay",
-                                "-e", "PCAP_DIR=/replay",
-                                "-e", "LOG_DIR=/replay-logs",
-                                "-v", f"{pcap_path.parent.resolve()}:/replay:ro",
-                                "-v", f"{Path(log_dir).resolve()}:/replay-logs",
-                                "zeek",
-                            ],
-                            check=True,
-                            capture_output=True,
-                            text=True,
-                            timeout=35,
-                        )
-                    except Exception as docker_exc:
-                        logger.debug("Zeek Docker container parse skipped (%s). Using fallback parser.", docker_exc)
-
-                shipper = ZeekLogShipper(log_dir=log_dir)
-                for log_name in ["conn", "dns", "ssl"]:
-                    log_file = Path(log_dir) / f"{log_name}.log"
-                    if log_file.exists():
-                        recs = shipper.process_log_file(log_name, str(log_file))
-                        events.extend(recs)
+            shipper = ZeekLogShipper(log_dir=str(logs_dir))
+            for log_name in ["conn", "dns", "ssl"]:
+                log_file = logs_dir / f"{log_name}.log"
+                if log_file.exists() and log_file.stat().st_size > 0:
+                    recs = shipper.process_log_file(log_name, str(log_file))
+                    events.extend(recs)
         except Exception as exc:
-            logger.warning("Error reading PCAP %s: %s", pcap_path.name, exc)
+            logger.warning("Error reading Zeek logs from %s: %s", logs_dir, exc)
 
-    # Fallback to rich canonical PCAP flow sequence if Zeek logs are empty
+    # Strategy 2: Fallback to rich canonical PCAP flow sequence covering all 6 threat vectors
     if not events:
         generator = SyntheticFlowGenerator(seed=42)
-        # Generate representative flow batch representing canonical attack PCAP
-        for _ in range(80):
+        for _ in range(120):
             events.append(generator.generate_event(anomaly_ratio=0.35))
 
     return events
