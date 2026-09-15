@@ -141,6 +141,8 @@ def execute_pcap_replay_job(
                             "-e",
                             "MODE=replay",
                             "-e",
+                            f"TARGET_PCAP=/replay/{pcap_path.name}",
+                            "-e",
                             "PCAP_DIR=/replay",
                             "-e",
                             "LOG_DIR=/replay-logs",
@@ -161,7 +163,8 @@ def execute_pcap_replay_job(
 
             # Strategy 2: Ingest generated logs via ZeekLogShipper
             from backend.app.main import ws_manager
-            shipper = ZeekLogShipper(log_dir=log_dir)
+            kafka_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+            shipper = ZeekLogShipper(log_dir=log_dir, kafka_bootstrap_servers=kafka_servers)
             alert_store = ClickHouseAlertStore(auto_connect=True)
             pipeline = DetectionPipeline(store=SlidingWindowStore(use_redis=False), aggregator=AlertAggregator())
 
@@ -174,14 +177,17 @@ def execute_pcap_replay_job(
                         total_flows += len(records)
                     for event in records:
                         event["source"] = "replay"
+                        event["timestamp"] = time.time()
+                        target_topic = "traffic-flows" if log_name == "conn" else ("dns-queries" if log_name == "dns" else "ssl-metadata")
+                        shipper.emit(target_topic, event)
+
                         alerts = pipeline.process_flow_event(event)
                         for alert in alerts:
                             alert_store.insert_alert(alert)
                             if not alert.suppressed:
                                 try:
-                                    loop = asyncio.get_event_loop()
-                                    if loop.is_running():
-                                        asyncio.run_coroutine_threadsafe(ws_manager.broadcast(alert), loop)
+                                    loop = asyncio.get_running_loop()
+                                    loop.create_task(ws_manager.broadcast(alert))
                                 except Exception:
                                     pass
                         time.sleep(0.04)

@@ -36,12 +36,17 @@ if [ "$MODE" = "live" ]; then
 
 elif [ "$MODE" = "replay" ]; then
     echo "[ThreatLens-Zeek] Running one-shot PCAP replay..."
-    for pcap in "$PCAP_DIR"/*.pcap "$PCAP_DIR"/*.pcapng; do
-        [ -e "$pcap" ] || continue
-        process_pcap "$pcap"
-    done
-    echo "[ThreatLens-Zeek] One-shot replay completed. Sleeping to maintain logs container..."
-    exec tail -f /dev/null
+    TARGET_PCAP="${TARGET_PCAP:-}"
+    if [ -n "$TARGET_PCAP" ] && [ -f "$TARGET_PCAP" ]; then
+        process_pcap "$TARGET_PCAP"
+    else
+        for pcap in "$PCAP_DIR"/*.pcap "$PCAP_DIR"/*.pcapng; do
+            [ -e "$pcap" ] || continue
+            process_pcap "$pcap"
+        done
+    fi
+    echo "[ThreatLens-Zeek] One-shot replay completed."
+    exit 0
 
 else
     # Default: Watch directory mode
