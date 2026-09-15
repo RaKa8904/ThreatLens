@@ -47,12 +47,13 @@ REM    (findstr, not find: immune to a Unix find.exe shadowing it on PATH)
 tasklist /FI "IMAGENAME eq Docker Desktop.exe" 2>NUL | findstr /I /C:"Docker Desktop.exe">NUL
 if "%ERRORLEVEL%"=="1" (
     echo [*] Launching Docker Desktop engine...
-    if exist "C:\Users\%USERNAME%\AppData\Local\DockerDesktop\Docker Desktop.exe" (
-        start "" "C:\Users\%USERNAME%\AppData\Local\DockerDesktop\Docker Desktop.exe"
-    ) else (
-        if exist "C:\Program Files\Docker\Docker\Docker Desktop.exe" (
-            start "" "C:\Program Files\Docker\Docker\Docker Desktop.exe"
-        )
+    start "" "docker-desktop://" 2>NUL
+    if exist "%LOCALAPPDATA%\Programs\Docker\Docker\Docker Desktop.exe" (
+        start "" "%LOCALAPPDATA%\Programs\Docker\Docker\Docker Desktop.exe"
+    ) else if exist "C:\Program Files\Docker\Docker\Docker Desktop.exe" (
+        start "" "C:\Program Files\Docker\Docker\Docker Desktop.exe"
+    ) else if exist "%LOCALAPPDATA%\DockerDesktop\Docker Desktop.exe" (
+        start "" "%LOCALAPPDATA%\DockerDesktop\Docker Desktop.exe"
     )
 )
 
@@ -72,7 +73,9 @@ goto wait_docker
 :docker_ready
 echo [OK] Docker daemon ready.
 
-REM 5. Launch Docker Compose containers (Redpanda, Redis, ClickHouse, Zeek)
+REM 5. Build and launch Docker Compose containers (Redpanda, Redis, ClickHouse, Zeek)
+echo [*] Compiling Zeek Inspection Engine ^& SOC Infrastructure...
+docker compose build zeek >nul 2>&1
 echo [*] Spinning up SOC Infrastructure (Redpanda, Redis, ClickHouse, Zeek)...
 docker compose up -d
 if errorlevel 1 (
@@ -97,7 +100,7 @@ REM 7. Launch FastAPI Backend in a dedicated window.
 REM    NO --reload here: the reloader's file watcher scans the bind-mounted
 REM    data\clickhouse directory and crashes with WinError 1920.
 echo [*] Starting ThreatLens Backend API ^& Streaming Gateway - Port 8000...
-start "ThreatLens Backend API" cmd /k "set INGEST_SOURCE=synthetic&& .venv\Scripts\python.exe -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000"
+start "ThreatLens Backend API" cmd /k "set INGEST_SOURCE=zeek_pcap&& .venv\Scripts\python.exe -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000"
 
 echo [*] Waiting for backend readiness - persistent storage required...
 "%PY%" scripts\wait_for_services.py --stage backend --timeout 60
