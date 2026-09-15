@@ -3,6 +3,7 @@ import {
   Shield01Icon as ShieldSecurity,
   Activity01Icon as Activity01,
   Settings01Icon as Settings01,
+  PlayIcon as Play01,
 } from "hugeicons-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -12,12 +13,14 @@ interface NavbarProps {
   status: ConnectionStatus;
   totalAlerts: number;
   onOpenConfig?: () => void;
+  onOpenReplay?: () => void;
 }
 
 export function Navbar({
   status,
   totalAlerts,
   onOpenConfig,
+  onOpenReplay,
 }: NavbarProps) {
   const [utcTime, setUtcTime] = useState<string>("");
 
@@ -96,6 +99,19 @@ export function Navbar({
 
         {/* Right: Controls & Real-Time Clock */}
         <div className="flex items-center space-x-3">
+          {/* Replay Capture action trigger */}
+          {onOpenReplay && (
+            <Button
+              variant="subtle"
+              size="sm"
+              onClick={onOpenReplay}
+              className="gap-1.5 font-mono text-[11px] bg-emerald-500/10 border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/20"
+            >
+              <Play01 className="h-3.5 w-3.5 text-emerald-400" />
+              REPLAY CAPTURE
+            </Button>
+          )}
+
           {/* Detection configuration panel trigger */}
           {onOpenConfig && (
             <Button

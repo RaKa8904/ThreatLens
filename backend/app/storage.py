@@ -59,6 +59,7 @@ class ClickHouseAlertStore:
         self._memory_ring: deque[ThreatAlertSchema] = deque(maxlen=max_memory_buffer)
         self._status_overrides: Dict[str, AlertStatusEnum] = {}
         self._lock = threading.Lock()
+        self._ch_lock = threading.Lock()
 
         if auto_connect:
             self.connect()
@@ -164,11 +165,12 @@ class ClickHouseAlertStore:
                 "evidence_json", "inter_arrival_variance", "shannon_entropy",
                 "byte_ratio", "fan_out_count", "ja3_hash", "details", "status", "incident_id", "suppressed", "source"
             ]
-            self.client.insert(
-                f"{self.database}.alerts",
-                [row],
-                column_names=columns,
-            )
+            with self._ch_lock:
+                self.client.insert(
+                    f"{self.database}.alerts",
+                    [row],
+                    column_names=columns,
+                )
             return True
         except Exception as exc:
             logger.error("ClickHouse insert failed: %s. Stored in memory ring buffer.", exc)
@@ -203,7 +205,8 @@ class ClickHouseAlertStore:
 
                 query += " ORDER BY timestamp DESC LIMIT %(limit)s"
 
-                result = self.client.query(query, parameters=params)
+                with self._ch_lock:
+                    result = self.client.query(query, parameters=params)
                 alerts: List[ThreatAlertSchema] = []
                 for row in result.result_rows:
                     ts, alert_id, f_id, t_class, conf, severity, ev_json, alert_status, incident_id, suppressed, source = row
@@ -266,10 +269,11 @@ class ClickHouseAlertStore:
                     updated = changed
         if self.is_connected and self.client is not None:
             try:
-                self.client.command(
-                    f"ALTER TABLE {self.database}.alerts UPDATE status = %(status)s WHERE flow_id = %(flow_id)s",
-                    parameters={"status": status.value, "flow_id": flow_id},
-                )
+                with self._ch_lock:
+                    self.client.command(
+                        f"ALTER TABLE {self.database}.alerts UPDATE status = %(status)s WHERE flow_id = %(flow_id)s",
+                        parameters={"status": status.value, "flow_id": flow_id},
+                    )
             except Exception as exc:
                 logger.error("ClickHouse status update failed: %s", exc)
         return updated
@@ -281,7 +285,8 @@ class ClickHouseAlertStore:
             self._notes.append(note)
         if self.is_connected and self.client is not None:
             try:
-                self.client.insert(f"{self.database}.alert_notes", [[note.flow_id, note.text, note.created_at]], column_names=["flow_id", "text", "created_at"])
+                with self._ch_lock:
+                    self.client.insert(f"{self.database}.alert_notes", [[note.flow_id, note.text, note.created_at]], column_names=["flow_id", "text", "created_at"])
             except Exception as exc:
                 logger.error("ClickHouse note insert failed: %s", exc)
         return note
@@ -289,7 +294,8 @@ class ClickHouseAlertStore:
     def get_notes(self, flow_id: str) -> List[AnalystNoteSchema]:
         if self.is_connected and self.client is not None:
             try:
-                result = self.client.query(f"SELECT flow_id, text, created_at FROM {self.database}.alert_notes WHERE flow_id = %(flow_id)s ORDER BY created_at ASC", parameters={"flow_id": flow_id})
+                with self._ch_lock:
+                    result = self.client.query(f"SELECT flow_id, text, created_at FROM {self.database}.alert_notes WHERE flow_id = %(flow_id)s ORDER BY created_at ASC", parameters={"flow_id": flow_id})
                 return [AnalystNoteSchema(flow_id=row[0], text=row[1], created_at=normalize_utc_timestamp(row[2])) for row in result.result_rows]
             except Exception as exc:
                 logger.error("ClickHouse note query failed: %s", exc)
@@ -300,7 +306,8 @@ class ClickHouseAlertStore:
         """Returns total alerts recorded in ClickHouse or in-memory ring buffer."""
         if self.is_connected and self.client is not None:
             try:
-                res = self.client.command(f"SELECT count() FROM {self.database}.alerts")
+                with self._ch_lock:
+                    res = self.client.command(f"SELECT count() FROM {self.database}.alerts")
                 return int(res)
             except Exception:
                 pass
