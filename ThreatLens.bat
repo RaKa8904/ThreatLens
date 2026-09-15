@@ -48,7 +48,9 @@ tasklist /FI "IMAGENAME eq Docker Desktop.exe" 2>NUL | findstr /I /C:"Docker Des
 if "%ERRORLEVEL%"=="1" (
     echo [*] Launching Docker Desktop engine...
     start "" "docker-desktop://" 2>NUL
-    if exist "%LOCALAPPDATA%\Programs\Docker\Docker\Docker Desktop.exe" (
+    if exist "%LOCALAPPDATA%\Programs\DockerDesktop\Docker Desktop.exe" (
+        start "" "%LOCALAPPDATA%\Programs\DockerDesktop\Docker Desktop.exe"
+    ) else if exist "%LOCALAPPDATA%\Programs\Docker\Docker\Docker Desktop.exe" (
         start "" "%LOCALAPPDATA%\Programs\Docker\Docker\Docker Desktop.exe"
     ) else if exist "C:\Program Files\Docker\Docker\Docker Desktop.exe" (
         start "" "C:\Program Files\Docker\Docker\Docker Desktop.exe"
