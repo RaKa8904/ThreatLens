@@ -55,6 +55,7 @@ from engine.config import describe_thresholds, get_threshold
 from engine.runtime_config import RuntimeConfigStore
 from ingest.producers.mock_producer import SyntheticFlowGenerator
 from ingest.producers.zeek_kafka_shipper import ZeekLogShipper
+from backend.app.pcap_streamer import PCAPStreamer
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -175,22 +176,39 @@ async def background_stream_worker(interval_seconds: float = 1.5):
         logger.error("Error in telemetry streaming worker: %s", exc)
 
 
-async def run_startup_pcap_ingestion(pcap_filename: str = "sample_attack.pcap"):
+async def background_pcap_stream_worker(pacing_seconds: float = 0.08):
     """
-    On application startup, ingests canonical sample attack PCAP through the Zeek DPI pipeline,
-    persisting alerts to ClickHouse and populating the live stream.
+    Continuous background task streaming real PCAP flow events packet-by-packet,
+    feeding the detection pipeline, indexing to ClickHouse, and broadcasting alerts.
     """
-    pcap_path = Path(__file__).resolve().parent.parent.parent / "pcaps" / pcap_filename
-    if not pcap_path.exists():
-        logger.warning("Startup PCAP file %s not found. Skipping initial PCAP ingestion.", pcap_path)
-        return
-
-    logger.info("Executing startup Zeek PCAP ingestion for %s...", pcap_filename)
+    logger.info("ThreatLens background PCAP telemetry streaming worker started.")
+    streamer = PCAPStreamer("sample_attack.pcap")
     try:
-        await asyncio.to_thread(run_replay, str(pcap_path))
-        logger.info("Startup Zeek PCAP ingestion finished for %s", pcap_filename)
+        async for event in streamer.stream_flows_continuous(pacing_seconds=pacing_seconds):
+            # Update metrics counters
+            record_flow_telemetry(event)
+
+            # Run detection pipeline
+            processing_started = time.perf_counter()
+            alerts = pipeline.process_flow_event(event)
+            processing_latency_ms = (time.perf_counter() - processing_started) * 1000
+            throughput_state["last_processing_latency_ms"] = round(processing_latency_ms, 3)
+
+            # Ingest to ClickHouse and broadcast live to WebSocket clients
+            for alert in alerts:
+                event_ts = event_timestamp_seconds(event)
+                alert = alert.model_copy(update={
+                    "ingest_latency_ms": round(max(0.0, time.time() - event_ts) * 1000, 3) if event_ts else None,
+                    "processing_latency_ms": round(processing_latency_ms, 3),
+                })
+                alert_store.insert_alert(alert)
+                if not alert.suppressed:
+                    await ws_manager.broadcast(alert)
+                throughput_state["last_delivery_latency_ms"] = round(max(0.0, time.time() - alert.timestamp.timestamp()) * 1000, 3)
+    except asyncio.CancelledError:
+        logger.info("ThreatLens background PCAP telemetry streaming worker stopped.")
     except Exception as exc:
-        logger.error("Startup PCAP ingestion error: %s", exc)
+        logger.error("Error in PCAP telemetry streaming worker: %s", exc)
 
 
 @asynccontextmanager
@@ -213,11 +231,10 @@ async def lifespan(app: FastAPI):
             on_message=lambda topic, data: record_flow_telemetry(data),
         )
         worker_task = asyncio.create_task(consumer.run_consumer_loop(stop_event=stop_event))
+    elif ingest_source in ("zeek_pcap", "pcap", "default"):
+        logger.info("Launching continuous packet-by-packet PCAP flow streaming worker...")
+        worker_task = asyncio.create_task(background_pcap_stream_worker(pacing_seconds=0.08))
     else:
-        # Default Mode: Process canonical sample_attack.pcap via Zeek pipeline on startup
-        if ingest_source in ("zeek_pcap", "pcap", "default"):
-            asyncio.create_task(run_startup_pcap_ingestion("sample_attack.pcap"))
-
         enable_bg = os.getenv("ENABLE_BACKGROUND_GENERATOR", "true").lower() in ("true", "1", "yes")
         if enable_bg:
             worker_task = asyncio.create_task(background_stream_worker(interval_seconds=1.2))

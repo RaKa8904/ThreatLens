@@ -113,11 +113,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-REM 8. Ship initial Zeek PCAP logs to Redpanda/Kafka
-echo [*] Shipping packet metadata ^& PCAP traces to Redpanda Streaming Hub...
-"%PY%" ingest\producers\zeek_kafka_shipper.py --mode batch
-
-REM 9. Launch React Frontend in a dedicated window - deps must already exist
+REM 8. Launch React Frontend in a dedicated window - deps must already exist
 if not exist "frontend\node_modules" (
     echo [X] Frontend dependencies missing. Run once, then relaunch:
     echo     cd frontend
