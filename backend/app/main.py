@@ -175,10 +175,28 @@ async def background_stream_worker(interval_seconds: float = 1.5):
         logger.error("Error in telemetry streaming worker: %s", exc)
 
 
+async def run_startup_pcap_ingestion(pcap_filename: str = "sample_attack.pcap"):
+    """
+    On application startup, ingests canonical sample attack PCAP through the Zeek DPI pipeline,
+    persisting alerts to ClickHouse and populating the live stream.
+    """
+    pcap_path = Path(__file__).resolve().parent.parent.parent / "pcaps" / pcap_filename
+    if not pcap_path.exists():
+        logger.warning("Startup PCAP file %s not found. Skipping initial PCAP ingestion.", pcap_path)
+        return
+
+    logger.info("Executing startup Zeek PCAP ingestion for %s...", pcap_filename)
+    try:
+        await asyncio.to_thread(run_replay, str(pcap_path))
+        logger.info("Startup Zeek PCAP ingestion finished for %s", pcap_filename)
+    except Exception as exc:
+        logger.error("Startup PCAP ingestion error: %s", exc)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for application startup and shutdown lifecycle."""
-    ingest_source = os.getenv("INGEST_SOURCE", "synthetic").lower()
+    ingest_source = os.getenv("INGEST_SOURCE", "zeek_pcap").lower()
     logger.info("ThreatLens Ingestion Mode: %s", ingest_source)
 
     worker_task = None
@@ -196,7 +214,10 @@ async def lifespan(app: FastAPI):
         )
         worker_task = asyncio.create_task(consumer.run_consumer_loop(stop_event=stop_event))
     else:
-        # Default: Synthetic event stream generator
+        # Default Mode: Process canonical sample_attack.pcap via Zeek pipeline on startup
+        if ingest_source in ("zeek_pcap", "pcap", "default"):
+            asyncio.create_task(run_startup_pcap_ingestion("sample_attack.pcap"))
+
         enable_bg = os.getenv("ENABLE_BACKGROUND_GENERATOR", "true").lower() in ("true", "1", "yes")
         if enable_bg:
             worker_task = asyncio.create_task(background_stream_worker(interval_seconds=1.2))
