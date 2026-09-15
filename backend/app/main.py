@@ -176,12 +176,14 @@ async def background_stream_worker(interval_seconds: float = 1.5):
         logger.error("Error in telemetry streaming worker: %s", exc)
 
 
-async def background_pcap_stream_worker(pacing_seconds: float = 0.08):
+async def background_pcap_stream_worker(pacing_seconds: Optional[float] = None):
     """
     Continuous background task streaming real PCAP flow events packet-by-packet,
     feeding the detection pipeline, indexing to ClickHouse, and broadcasting alerts.
     """
-    logger.info("ThreatLens background PCAP telemetry streaming worker started.")
+    if pacing_seconds is None:
+        pacing_seconds = float(os.getenv("SIMULATION_PACE_SECONDS", "1.2"))
+    logger.info("ThreatLens background PCAP telemetry streaming worker started (pacing=%.2fs).", pacing_seconds)
     streamer = PCAPStreamer("sample_attack.pcap")
     try:
         async for event in streamer.stream_flows_continuous(pacing_seconds=pacing_seconds):
@@ -232,8 +234,9 @@ async def lifespan(app: FastAPI):
         )
         worker_task = asyncio.create_task(consumer.run_consumer_loop(stop_event=stop_event))
     elif ingest_source in ("zeek_pcap", "pcap", "default"):
-        logger.info("Launching continuous packet-by-packet PCAP flow streaming worker...")
-        worker_task = asyncio.create_task(background_pcap_stream_worker(pacing_seconds=0.08))
+        pace = float(os.getenv("SIMULATION_PACE_SECONDS", "1.2"))
+        logger.info("Launching continuous packet-by-packet PCAP flow streaming worker (pace=%.2fs)...", pace)
+        worker_task = asyncio.create_task(background_pcap_stream_worker(pacing_seconds=pace))
     else:
         enable_bg = os.getenv("ENABLE_BACKGROUND_GENERATOR", "true").lower() in ("true", "1", "yes")
         if enable_bg:
@@ -623,9 +626,9 @@ async def websocket_threat_feed(websocket: WebSocket):
     """
     await ws_manager.connect(websocket)
     try:
-        # Avoid replaying the persistent archive as a burst during live simulation.
+        # Only replay persistent archive if SIMULATION_REPLAY_HISTORY is explicitly enabled
         replay_history = os.getenv("SIMULATION_REPLAY_HISTORY", "false").lower() in ("true", "1", "yes")
-        if os.getenv("INGEST_SOURCE", "synthetic").lower() != "synthetic" or replay_history:
+        if replay_history:
             recent_alerts = alert_store.get_recent_alerts(limit=50)
             for alert in reversed(recent_alerts):
                 payload = alert.model_dump() if hasattr(alert, "model_dump") else (alert.dict() if hasattr(alert, "dict") else alert)

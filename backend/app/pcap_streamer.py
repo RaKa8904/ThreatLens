@@ -70,7 +70,7 @@ class PCAPStreamer:
 
     async def stream_flows_continuous(
         self,
-        pacing_seconds: float = 0.08,
+        pacing_seconds: float = 1.2,
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         Continuously yields PCAP flow events sequentially, cycling back to the start
