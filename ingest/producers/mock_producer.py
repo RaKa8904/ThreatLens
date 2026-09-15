@@ -78,6 +78,7 @@ class SyntheticFlowGenerator:
         self._beacon_state: Dict[str, float] = {}
         self._threat_bag: List[Callable[[], Dict[str, Any]]] = []
         self._distributed_ddos_queue: List[Dict[str, Any]] = []
+        self._recon_scan_queue: List[Dict[str, Any]] = []
 
     def _next_threat_generator(self) -> Callable[[], Dict[str, Any]]:
         """Return a randomized threat generator without repeating a vector until the bag is exhausted."""
@@ -337,33 +338,39 @@ class SyntheticFlowGenerator:
     def generate_recon_scan(
         self,
         timestamp: Optional[float] = None,
-        scanner_ip: str = "10.42.9.88",
-        target_ip: Optional[str] = "10.24.12.20",
+        scanner_ip: Optional[str] = None,
+        target_ip: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Simulates reconnaissance port scan with high fan-out across multiple destination ports."""
         ts = timestamp if timestamp is not None else time.time()
+        src_ip = scanner_ip or f"10.42.{random.randint(1, 200)}.{random.randint(1, 254)}"
         dst_ip = target_ip or self._random_external_ip()
         scan_ports = [21, 22, 23, 25, 53, 80, 110, 143, 443, 445, 1433, 3306, 3389, 5432, 8080]
-        dst_port = random.choice(scan_ports)
+        selected_ports = random.sample(scan_ports, k=random.randint(4, 7))
 
-        return {
-            "timestamp": ts,
-            "flow_id": f"{scanner_ip}:{random.randint(50000, 65000)}->{dst_ip}:{dst_port}",
-            "src_ip": scanner_ip,
-            "src_port": random.randint(50000, 65000),
-            "dst_ip": dst_ip,
-            "dst_port": dst_port,
-            "protocol": "TCP",
-            "flags": ["SYN"],
-            "bytes_out": 44,
-            "bytes_in": 0,
-            "packets_out": 1,
-            "packets_in": 0,
-            "dns_query": None,
-            "dns_query_type": None,
-            "ja3_hash": None,
-            "simulated_label": "Reconnaissance Scan",
-        }
+        batch = [
+            {
+                "timestamp": ts + idx * 0.01,
+                "flow_id": f"{src_ip}:{random.randint(50000, 65000)}->{dst_ip}:{port}",
+                "src_ip": src_ip,
+                "src_port": random.randint(50000, 65000),
+                "dst_ip": dst_ip,
+                "dst_port": port,
+                "protocol": "TCP",
+                "flags": ["SYN"],
+                "bytes_out": 44,
+                "bytes_in": 0,
+                "packets_out": 1,
+                "packets_in": 0,
+                "dns_query": None,
+                "dns_query_type": None,
+                "ja3_hash": None,
+                "simulated_label": "Reconnaissance Scan",
+            }
+            for idx, port in enumerate(selected_ports)
+        ]
+        self._recon_scan_queue.extend(batch[1:])
+        return batch[0]
 
     def generate_data_exfiltration(
         self,
@@ -374,7 +381,7 @@ class SyntheticFlowGenerator:
         ts = timestamp if timestamp is not None else time.time()
         dst_ip = self._random_external_ip()
         dst_port = random.choice([443, 8443, 22, 9001])
-        bytes_out = random.randint(2_000_000, 25_000_000)
+        bytes_out = random.choice([1_200_000, 3_500_000, 12_000_000, 25_000_000])
         bytes_in = random.randint(1_000, 20_000)
 
         return {
@@ -402,22 +409,24 @@ class SyntheticFlowGenerator:
         """
         if self._distributed_ddos_queue:
             event = self._distributed_ddos_queue.pop(0)
+        elif self._recon_scan_queue:
+            event = self._recon_scan_queue.pop(0)
         elif random.random() > anomaly_ratio:
             return self.generate_benign_flow()
         else:
             chosen_generator = self._next_threat_generator()
             event = chosen_generator()
 
-        # Keep demo confidence levels varied without changing real detector scores.
+        # Keep demo confidence levels cleanly distributed across all severity tiers
         severity_roll = random.random()
-        if severity_roll < 0.15:
-            confidence_range = (0.35, 0.49)
+        if severity_roll < 0.25:
+            confidence_range = (0.72, 0.79)  # Low severity (< 0.80)
         elif severity_roll < 0.55:
-            confidence_range = (0.50, 0.69)
-        elif severity_roll < 0.88:
-            confidence_range = (0.70, 0.84)
+            confidence_range = (0.80, 0.89)  # Moderate severity (0.80 - 0.89)
+        elif severity_roll < 0.80:
+            confidence_range = (0.90, 0.94)  # High severity (0.90 - 0.94)
         else:
-            confidence_range = (0.86, 0.98)
+            confidence_range = (0.95, 0.99)  # Critical severity (>= 0.95)
         event["simulated_confidence"] = round(random.uniform(*confidence_range), 2)
         return event
 
