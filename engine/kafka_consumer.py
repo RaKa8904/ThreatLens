@@ -24,6 +24,28 @@ from engine.pipeline import DetectionPipeline
 logger = logging.getLogger(__name__)
 
 
+def ensure_kafka_topics(servers: str, topics: List[str]) -> None:
+    """Ensures Kafka topics exist before consumer subscription to avoid metadata rebalance timeouts."""
+    try:
+        from kafka.admin import KafkaAdminClient, NewTopic  # type: ignore
+        from kafka.errors import TopicAlreadyExistsError  # type: ignore
+        admin = KafkaAdminClient(bootstrap_servers=servers, request_timeout_ms=3000)
+        new_topics = [NewTopic(name=t, num_partitions=1, replication_factor=1) for t in topics]
+        try:
+            admin.create_topics(new_topics=new_topics, validate_only=False)
+        except TopicAlreadyExistsError:
+            pass
+        except Exception as exc:
+            logger.debug("Topic auto-creation non-critical error: %s", exc)
+        finally:
+            try:
+                admin.close()
+            except Exception:
+                pass
+    except Exception as exc:
+        logger.debug("KafkaAdminClient topic check omitted: %s", exc)
+
+
 class KafkaIngestConsumer:
     """
     Consumes telemetry from Kafka topics or an in-memory queue, routes events
@@ -51,18 +73,14 @@ class KafkaIngestConsumer:
         self.is_kafka_connected = False
         self._is_running = False
 
-        # kafka_bootstrap_servers semantics: None (default) resolves the
-        # KAFKA_BOOTSTRAP_SERVERS environment variable; an explicitly passed
-        # empty string forces pure in-memory queue mode (used by the offline
-        # test harness so results never depend on a live broker).
         if kafka_bootstrap_servers is not None:
             servers = kafka_bootstrap_servers
         else:
             servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS")
         if servers:
             try:
+                ensure_kafka_topics(servers, self.topics)
                 from kafka import KafkaConsumer  # type: ignore
-                # kafka-python 3.x warns on lambda deserializers; decode in the loop instead.
                 self.kafka_consumer = KafkaConsumer(
                     *self.topics,
                     bootstrap_servers=servers,
