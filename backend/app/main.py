@@ -110,8 +110,9 @@ def run_replay(pcap_path: str) -> None:
             is_testing = os.getenv("TESTING", "").lower() == "true" or "PYTEST_CURRENT_TEST" in os.environ
             if shutil.which("docker") and not is_testing:
                 try:
+                    subprocess.run(["docker", "rm", "-f", "threatlens-zeek-replay"], capture_output=True, timeout=5)
                     subprocess.run(
-                        ["docker", "compose", "run", "--rm", "-e", "MODE=replay", "-e", "PCAP_DIR=/replay", "-e", "LOG_DIR=/replay-logs", "-v", f"{Path(pcap_path).parent.resolve()}:/replay:ro", "-v", f"{Path(log_dir).resolve()}:/replay-logs", "zeek"],
+                        ["docker", "compose", "run", "--rm", "--name", "threatlens-zeek-replay", "-e", "MODE=replay", "-e", "PCAP_DIR=/replay", "-e", "LOG_DIR=/replay-logs", "-v", f"{Path(pcap_path).parent.resolve()}:/replay:ro", "-v", f"{Path(log_dir).resolve()}:/replay-logs", "zeek"],
                         check=True,
                         capture_output=True,
                         text=True,

@@ -128,12 +128,16 @@ def execute_pcap_replay_job(
             is_testing = os.getenv("TESTING", "").lower() == "true" or "PYTEST_CURRENT_TEST" in os.environ
             if shutil.which("docker") and not is_testing:
                 try:
+                    # Clean up any lingering container with the same name before launch
+                    subprocess.run(["docker", "rm", "-f", "threatlens-zeek-replay"], capture_output=True, timeout=5)
                     result = subprocess.run(
                         [
                             "docker",
                             "compose",
                             "run",
                             "--rm",
+                            "--name",
+                            "threatlens-zeek-replay",
                             "-e",
                             "MODE=replay",
                             "-e",
