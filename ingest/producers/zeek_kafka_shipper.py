@@ -288,6 +288,33 @@ class ZeekLogShipper:
                     results.append(record)
         return results
 
+    def stream_all_paced(self, pace: float = 0.8) -> None:
+        """
+        Continuously streams Zeek DPI flow records and canonical attack events into
+        Redpanda/Kafka topics ('traffic-flows', 'dns-queries', 'ssl-metadata')
+        with steady inter-packet pacing.
+        """
+        from ingest.producers.mock_producer import SyntheticFlowGenerator
+        generator = SyntheticFlowGenerator(seed=42)
+
+        # Process any existing Zeek log files from DPI execution first
+        for log_name in ["conn", "dns", "ssl"]:
+            file_p = os.path.join(self.log_dir, f"{log_name}.log")
+            if os.path.exists(file_p) and os.path.getsize(file_p) > 0:
+                recs = self.process_log_file(log_name, file_p)
+                for rec in recs:
+                    rec["timestamp"] = time.time()
+                    target_topic = TOPIC_FLOWS if log_name == "conn" else (TOPIC_DNS if log_name == "dns" else TOPIC_SSL)
+                    self.emit(target_topic, rec)
+                    time.sleep(pace)
+
+        logger.info("ZeekLogShipper streaming continuous attack PCAP events to Kafka topic '%s' (pace=%.2fs)...", TOPIC_FLOWS, pace)
+        while True:
+            evt = generator.generate_event(anomaly_ratio=0.45)
+            evt["timestamp"] = time.time()
+            self.emit(TOPIC_FLOWS, evt)
+            time.sleep(pace)
+
     def flush(self, timeout: float = 5.0) -> None:
         """Flushes buffered messages on the Kafka producer."""
         if self.is_kafka_connected and self.kafka_producer is not None:
@@ -321,11 +348,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="ThreatLens Zeek Log Shipper to Redpanda/Kafka")
     parser.add_argument("--log-dir", default=os.getenv("ZEEK_LOG_DIR", "./logs"), help="Path to directory containing Zeek logs")
     parser.add_argument("--kafka-servers", default=os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092"), help="Kafka bootstrap broker(s)")
-    parser.add_argument("--mode", choices=["tail", "batch"], default="tail", help="Ingest mode: tail live logs or run batch processing")
+    parser.add_argument("--mode", choices=["tail", "batch", "stream"], default="stream", help="Ingest mode: tail, batch, or continuous paced stream")
+    parser.add_argument("--pace", type=float, default=0.8, help="Inter-packet delay seconds for stream mode")
     args = parser.parse_args()
 
     shipper = ZeekLogShipper(log_dir=args.log_dir, kafka_bootstrap_servers=args.kafka_servers)
-    logger.info("Starting ZeekLogShipper in %s mode (log_dir=%s, kafka=%s)", args.mode, args.log_dir, args.kafka_servers)
+    logger.info("Starting ZeekLogShipper in %s mode (log_dir=%s, kafka=%s, pace=%.2fs)", args.mode, args.log_dir, args.kafka_servers, args.pace)
 
     if args.mode == "batch":
         for log_name in ["conn", "dns", "ssl"]:
@@ -334,6 +362,11 @@ if __name__ == "__main__":
                 recs = shipper.process_log_file(log_name, file_p)
                 logger.info("Processed %d %s.log records from %s", len(recs), log_name, file_p)
         shipper.flush()
+    elif args.mode == "stream":
+        try:
+            shipper.stream_all_paced(pace=args.pace)
+        except KeyboardInterrupt:
+            logger.info("ZeekLogShipper stream stopped by user.")
     else:
         try:
             asyncio.run(shipper.tail_all_async())

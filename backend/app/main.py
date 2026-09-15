@@ -55,7 +55,6 @@ from engine.config import describe_thresholds, get_threshold
 from engine.runtime_config import RuntimeConfigStore
 from ingest.producers.mock_producer import SyntheticFlowGenerator
 from ingest.producers.zeek_kafka_shipper import ZeekLogShipper
-from backend.app.pcap_streamer import PCAPStreamer
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -176,67 +175,30 @@ async def background_stream_worker(interval_seconds: float = 1.5):
         logger.error("Error in telemetry streaming worker: %s", exc)
 
 
-async def background_pcap_stream_worker(pacing_seconds: Optional[float] = None):
-    """
-    Continuous background task streaming real PCAP flow events packet-by-packet,
-    feeding the detection pipeline, indexing to ClickHouse, and broadcasting alerts.
-    """
-    if pacing_seconds is None:
-        pacing_seconds = float(os.getenv("SIMULATION_PACE_SECONDS", "1.2"))
-    logger.info("ThreatLens background PCAP telemetry streaming worker started (pacing=%.2fs).", pacing_seconds)
-    streamer = PCAPStreamer("sample_attack.pcap")
-    try:
-        async for event in streamer.stream_flows_continuous(pacing_seconds=pacing_seconds):
-            # Update metrics counters
-            record_flow_telemetry(event)
-
-            # Run detection pipeline
-            processing_started = time.perf_counter()
-            alerts = pipeline.process_flow_event(event)
-            processing_latency_ms = (time.perf_counter() - processing_started) * 1000
-            throughput_state["last_processing_latency_ms"] = round(processing_latency_ms, 3)
-
-            # Ingest to ClickHouse and broadcast live to WebSocket clients
-            for alert in alerts:
-                event_ts = event_timestamp_seconds(event)
-                alert = alert.model_copy(update={
-                    "ingest_latency_ms": round(max(0.0, time.time() - event_ts) * 1000, 3) if event_ts else None,
-                    "processing_latency_ms": round(processing_latency_ms, 3),
-                })
-                alert_store.insert_alert(alert)
-                if not alert.suppressed:
-                    await ws_manager.broadcast(alert)
-                throughput_state["last_delivery_latency_ms"] = round(max(0.0, time.time() - alert.timestamp.timestamp()) * 1000, 3)
-    except asyncio.CancelledError:
-        logger.info("ThreatLens background PCAP telemetry streaming worker stopped.")
-    except Exception as exc:
-        logger.error("Error in PCAP telemetry streaming worker: %s", exc)
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for application startup and shutdown lifecycle."""
-    ingest_source = os.getenv("INGEST_SOURCE", "zeek_pcap").lower()
+    ingest_source = os.getenv("INGEST_SOURCE", "kafka").lower()
     logger.info("ThreatLens Ingestion Mode: %s", ingest_source)
 
     worker_task = None
     stop_event = asyncio.Event()
 
-    if ingest_source == "kafka":
+    if ingest_source in ("kafka", "zeek_pcap", "pcap", "default"):
         kafka_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
         logger.info("Initializing KafkaIngestConsumer connected to %s...", kafka_servers)
-        consumer = KafkaIngestConsumer(
-            pipeline=pipeline,
-            storage=alert_store,
-            ws_manager=ws_manager,
-            kafka_bootstrap_servers=kafka_servers,
-            on_message=lambda topic, data: record_flow_telemetry(data),
-        )
-        worker_task = asyncio.create_task(consumer.run_consumer_loop(stop_event=stop_event))
-    elif ingest_source in ("zeek_pcap", "pcap", "default"):
-        pace = float(os.getenv("SIMULATION_PACE_SECONDS", "1.2"))
-        logger.info("Launching continuous packet-by-packet PCAP flow streaming worker (pace=%.2fs)...", pace)
-        worker_task = asyncio.create_task(background_pcap_stream_worker(pacing_seconds=pace))
+        try:
+            consumer = KafkaIngestConsumer(
+                pipeline=pipeline,
+                storage=alert_store,
+                ws_manager=ws_manager,
+                kafka_bootstrap_servers=kafka_servers,
+                on_message=lambda topic, data: record_flow_telemetry(data),
+            )
+            worker_task = asyncio.create_task(consumer.run_consumer_loop(stop_event=stop_event))
+        except Exception as exc:
+            logger.warning("Kafka Consumer init fallback (%s). Using background telemetry stream worker.", exc)
+            worker_task = asyncio.create_task(background_stream_worker(interval_seconds=1.2))
     else:
         enable_bg = os.getenv("ENABLE_BACKGROUND_GENERATOR", "true").lower() in ("true", "1", "yes")
         if enable_bg:

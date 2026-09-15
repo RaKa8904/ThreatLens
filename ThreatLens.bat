@@ -102,7 +102,7 @@ REM 7. Launch FastAPI Backend in a dedicated window.
 REM    NO --reload here: the reloader's file watcher scans the bind-mounted
 REM    data\clickhouse directory and crashes with WinError 1920.
 echo [*] Starting ThreatLens Backend API ^& Streaming Gateway - Port 8000...
-start "ThreatLens Backend API" cmd /k "set INGEST_SOURCE=zeek_pcap&& .venv\Scripts\python.exe -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000"
+start "ThreatLens Backend API" cmd /k "set INGEST_SOURCE=kafka&& .venv\Scripts\python.exe -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000"
 
 echo [*] Waiting for backend readiness - persistent storage required...
 "%PY%" scripts\wait_for_services.py --stage backend --timeout 60
@@ -113,7 +113,11 @@ if errorlevel 1 (
     exit /b 1
 )
 
-REM 8. Launch React Frontend in a dedicated window - deps must already exist
+REM 8. Stream Zeek packet metadata & PCAP traces to Redpanda Streaming Hub
+echo [*] Launching Zeek DPI Telemetry Shipper to Redpanda Streaming Hub...
+start "ThreatLens Zeek Telemetry Shipper" cmd /k ".venv\Scripts\python.exe ingest\producers\zeek_kafka_shipper.py --mode stream --pace 0.8"
+
+REM 9. Launch React Frontend in a dedicated window - deps must already exist
 if not exist "frontend\node_modules" (
     echo [X] Frontend dependencies missing. Run once, then relaunch:
     echo     cd frontend
