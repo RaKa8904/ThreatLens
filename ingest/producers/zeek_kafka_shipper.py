@@ -201,9 +201,9 @@ class ZeekLogShipper:
         if servers:
             try:
                 from kafka import KafkaProducer  # type: ignore
+                # kafka-python 3.x warns on lambda serializers; encode explicitly instead.
                 self.kafka_producer = KafkaProducer(
                     bootstrap_servers=servers,
-                    value_serializer=lambda v: json.dumps(v, default=str).encode("utf-8"),
                     request_timeout_ms=2000,
                 )
                 self.is_kafka_connected = True
@@ -217,7 +217,7 @@ class ZeekLogShipper:
         """Publishes record to target Kafka topic or enqueues in-memory."""
         if self.is_kafka_connected and self.kafka_producer is not None:
             try:
-                self.kafka_producer.send(topic, payload)
+                self.kafka_producer.send(topic, json.dumps(payload, default=str).encode("utf-8"))
                 return
             except Exception as exc:
                 logger.error("Failed to publish to Kafka topic %s: %s", topic, exc)

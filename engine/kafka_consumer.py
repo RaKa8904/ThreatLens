@@ -62,10 +62,10 @@ class KafkaIngestConsumer:
         if servers:
             try:
                 from kafka import KafkaConsumer  # type: ignore
+                # kafka-python 3.x warns on lambda deserializers; decode in the loop instead.
                 self.kafka_consumer = KafkaConsumer(
                     *self.topics,
                     bootstrap_servers=servers,
-                    value_deserializer=lambda m: json.loads(m.decode("utf-8")),
                     auto_offset_reset="earliest",
                     enable_auto_commit=True,
                     group_id="threatlens-pipeline-group",
@@ -141,7 +141,10 @@ class KafkaIngestConsumer:
                         for msg in records:
                             if stop_event and stop_event.is_set():
                                 break
-                            self.process_message(msg.topic, msg.value)
+                            value = msg.value
+                            if isinstance(value, (bytes, bytearray)):
+                                value = json.loads(value.decode("utf-8"))
+                            self.process_message(msg.topic, value)
                 except Exception as exc:
                     logger.debug("Kafka poll error: %s", exc)
             elif self.event_queue:

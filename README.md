@@ -296,7 +296,9 @@ ThreatLens supports two pluggable ingestion runtime modes configured via `.env`:
 Generates pseudo-random background enterprise traffic mixed with realistic multi-vector attack bursts:
 ```bash
 # Set in .env: INGEST_SOURCE=synthetic
-uvicorn backend.app.main:app --reload --port 8000
+# Normal startup: use ThreatLens.bat (no --reload; the reloader's watcher
+# crashes on data\clickhouse with WinError 1920). For iterative development:
+uvicorn backend.app.main:app --port 8000 --reload --reload-dir backend --reload-dir engine --reload-dir ingest
 ```
 
 #### Mode B: Live PCAP Replay & Zeek Ingestion Pipeline
@@ -313,7 +315,7 @@ python ingest/producers/zeek_kafka_shipper.py --mode batch
 
 # 3. Start FastAPI with Kafka consumer enabled:
 # Set in .env: INGEST_SOURCE=kafka
-uvicorn backend.app.main:app --reload --port 8000
+uvicorn backend.app.main:app --port 8000 --reload --reload-dir backend --reload-dir engine --reload-dir ingest
 ```
 
 FastAPI endpoints:

@@ -52,6 +52,8 @@ class SlidingWindowStore:
         self.redis_client = None
         self.is_redis_connected = False
         self.fallback_active = not use_redis
+        self._redis_params = None
+        self._last_redis_attempt = 0.0
 
         # In-memory storage: key -> deque of (timestamp, payload)
         self._memory_store: Dict[str, deque] = {}
@@ -61,31 +63,51 @@ class SlidingWindowStore:
             host = redis_host or os.getenv("REDIS_HOST", "localhost")
             port = int(redis_port or os.getenv("REDIS_PORT", 6379))
             password = redis_password or os.getenv("REDIS_PASSWORD") or None
+            self._redis_params = (host, port, redis_db, password)
+            self._try_connect_redis()
 
-            try:
-                import redis
-                client = redis.Redis(
-                    host=host,
-                    port=port,
-                    db=redis_db,
-                    password=password,
-                    decode_responses=True,
-                    socket_connect_timeout=1.0,
-                    socket_timeout=1.0,
-                )
-                client.ping()
-                self.redis_client = client
-                self.is_redis_connected = True
-                self.fallback_active = False
-                logger.info("Connected to Redis at %s:%s (db=%d)", host, port, redis_db)
-            except Exception as exc:
-                logger.warning(
-                    "Redis unavailable (%s). Falling back to in-memory SlidingWindowStore.",
-                    exc,
-                )
-                self.redis_client = None
-                self.is_redis_connected = False
-                self.fallback_active = True
+    def _try_connect_redis(self) -> bool:
+        """Connects (or reconnects) to Redis, throttled to one attempt per 15s.
+
+        A lost connection must not permanently pin the window store to the
+        in-memory fallback; the next write retries once Redis is back.
+        """
+        if self._redis_params is None:
+            return False
+        if self.is_redis_connected and self.redis_client is not None:
+            return True
+        now = time.time()
+        if now - self._last_redis_attempt < 15.0:
+            return False
+        self._last_redis_attempt = now
+        host, port, db, password = self._redis_params
+        try:
+            import redis
+
+            client = redis.Redis(
+                host=host,
+                port=port,
+                db=db,
+                password=password,
+                decode_responses=True,
+                socket_connect_timeout=1.0,
+                socket_timeout=1.0,
+            )
+            client.ping()
+            self.redis_client = client
+            self.is_redis_connected = True
+            self.fallback_active = False
+            logger.info("Connected to Redis at %s:%s (db=%d)", host, port, db)
+            return True
+        except Exception as exc:
+            logger.warning(
+                "Redis unavailable (%s). Falling back to in-memory SlidingWindowStore.",
+                exc,
+            )
+            self.redis_client = None
+            self.is_redis_connected = False
+            self.fallback_active = True
+            return False
 
     def _make_key(self, window_sec: int, key: str) -> str:
         """Constructs a namespaced storage key."""
@@ -113,6 +135,9 @@ class SlidingWindowStore:
         """
         namespaced_key = self._make_key(window_sec, key)
         cutoff = timestamp - window_sec
+
+        if self.use_redis and not self.is_redis_connected:
+            self._try_connect_redis()
 
         if self.is_redis_connected and self.redis_client is not None:
             try:

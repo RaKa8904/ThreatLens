@@ -452,9 +452,9 @@ class MockEventProducer:
         if servers:
             try:
                 from kafka import KafkaProducer  # type: ignore
+                # kafka-python 3.x warns on lambda serializers; encode explicitly instead.
                 self.kafka_producer = KafkaProducer(
                     bootstrap_servers=servers,
-                    value_serializer=lambda v: json.dumps(v).encode("utf-8"),
                     request_timeout_ms=2000,
                 )
                 self.is_kafka_connected = True
@@ -468,7 +468,7 @@ class MockEventProducer:
         """Publishes an event to Kafka or places it onto the internal queue."""
         if self.is_kafka_connected and self.kafka_producer is not None:
             try:
-                self.kafka_producer.send(self.topic, event)
+                self.kafka_producer.send(self.topic, json.dumps(event).encode("utf-8"))
                 return
             except Exception as exc:
                 logger.error("Failed to send event to Kafka: %s. Pushing to queue.", exc)

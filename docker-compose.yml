@@ -111,6 +111,7 @@ services:
       - threatlens-net
 
 networks:
+  # No fixed `name:` - a project-scoped network avoids the "exists but was
+  # not created for project" warning when the repo directory is renamed.
   threatlens-net:
-    name: threatlens-net
     driver: bridge

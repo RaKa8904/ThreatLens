@@ -189,7 +189,9 @@ Services:
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r backend/requirements.txt
-uvicorn backend.app.main:app --reload --port 8000
+# Normal startup is ThreatLens.bat (no --reload). Dev-only reload must scope
+# the watcher to code dirs or it crashes on data\clickhouse (WinError 1920):
+uvicorn backend.app.main:app --port 8000 --reload --reload-dir backend --reload-dir engine --reload-dir ingest
 ```
 
 The default mode is synthetic ingestion. The backend lifespan reads these important environment variables:

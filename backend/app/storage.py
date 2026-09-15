@@ -50,6 +50,10 @@ class ClickHouseAlertStore:
         self.client = None
         self.is_connected = False
         self.fallback_active = False
+        # Reconnect on use only when persistent storage was requested.
+        # auto_connect=False stores (test harness) stay pure in-memory and
+        # must never reach out to a real ClickHouse server.
+        self._allow_reconnect = auto_connect
 
         # In-memory circular buffer fallback (Thread-safe)
         self._memory_ring: deque[ThreatAlertSchema] = deque(maxlen=max_memory_buffer)
@@ -128,7 +132,7 @@ class ClickHouseAlertStore:
         with self._lock:
             self._memory_ring.appendleft(alert)
 
-        if not self.is_connected and not self.fallback_active:
+        if not self.is_connected and self._allow_reconnect:
             self.connect()
 
         if not self.is_connected or self.client is None:
@@ -180,7 +184,7 @@ class ClickHouseAlertStore:
         """
         Retrieves recent alerts from ClickHouse or falls back to in-memory ring buffer.
         """
-        if not self.is_connected and not self.fallback_active:
+        if not self.is_connected and self._allow_reconnect:
             self.connect()
 
         if self.is_connected and self.client is not None:

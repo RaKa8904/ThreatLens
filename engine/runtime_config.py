@@ -58,6 +58,8 @@ class RuntimeConfigStore:
         self.redis_client = None
         self.is_redis_connected = False
         self.refresh_interval_seconds = refresh_interval_seconds
+        self._redis_params = None
+        self._last_redis_attempt = 0.0
 
         self._suppressions: Dict[str, SuppressionRule] = {}
         self._stored_overrides: Dict[str, Any] = {}
@@ -68,28 +70,48 @@ class RuntimeConfigStore:
             host = redis_host or os.getenv("REDIS_HOST", "localhost")
             port = int(redis_port or os.getenv("REDIS_PORT", 6379))
             password = redis_password or os.getenv("REDIS_PASSWORD") or None
-            try:
-                import redis
+            self._redis_params = (host, port, redis_db, password)
+            self._try_connect_redis()
 
-                client = redis.Redis(
-                    host=host,
-                    port=port,
-                    db=redis_db,
-                    password=password,
-                    decode_responses=True,
-                    socket_connect_timeout=1.0,
-                    socket_timeout=1.0,
-                )
-                client.ping()
-                self.redis_client = client
-                self.is_redis_connected = True
-                logger.info("Runtime configuration connected to Redis at %s:%s", host, port)
-            except Exception as exc:
-                logger.warning(
-                    "Redis unavailable for runtime configuration (%s). "
-                    "Threshold and suppression changes will not survive a restart.",
-                    exc,
-                )
+    def _try_connect_redis(self) -> None:
+        """Connects (or reconnects) to Redis, throttled to one attempt per 15s.
+
+        A lost connection must not permanently pin runtime configuration to
+        memory mode; the next read or persist retries once Redis is back.
+        """
+        if self._redis_params is None:
+            return
+        if self.is_redis_connected and self.redis_client is not None:
+            return
+        now = time.time()
+        if now - self._last_redis_attempt < 15.0:
+            return
+        self._last_redis_attempt = now
+        host, port, db, password = self._redis_params
+        try:
+            import redis
+
+            client = redis.Redis(
+                host=host,
+                port=port,
+                db=db,
+                password=password,
+                decode_responses=True,
+                socket_connect_timeout=1.0,
+                socket_timeout=1.0,
+            )
+            client.ping()
+            self.redis_client = client
+            self.is_redis_connected = True
+            logger.info("Runtime configuration connected to Redis at %s:%s", host, port)
+        except Exception as exc:
+            self.redis_client = None
+            self.is_redis_connected = False
+            logger.warning(
+                "Redis unavailable for runtime configuration (%s). "
+                "Threshold and suppression changes will not survive a restart.",
+                exc,
+            )
 
     # =========================================================================
     # Status
@@ -98,6 +120,10 @@ class RuntimeConfigStore:
     @property
     def persistent(self) -> bool:
         """True only when configuration is actually durably stored."""
+        # Single self-heal hook: every Redis read/persist gates on this flag,
+        # so a throttled reconnect attempt here recovers memory-mode pinning
+        # without sprinkling retry calls through every caller.
+        self._try_connect_redis()
         return self.is_redis_connected and self.redis_client is not None
 
     @property
