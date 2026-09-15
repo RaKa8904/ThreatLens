@@ -140,6 +140,28 @@ Detector thresholds live in `engine/config.py` and are populated from named
 environment variables. `/api/config/thresholds` exposes the effective live values,
 which analysts can update at runtime; detection algorithms are otherwise unchanged.
 
+## Environment Configuration
+
+`backend/app/main.py` calls `load_dotenv()` (python-dotenv) at module import,
+BEFORE `engine.config`, `backend.app.storage`, and `engine.runtime_config`
+snapshot environment values at import time. The same call sits at the top of the
+standalone producer scripts (`ingest/producers/mock_producer.py`,
+`ingest/producers/zeek_kafka_shipper.py`). `load_dotenv()` does not override
+already-set variables, so shell environment and test `os.environ` setups stay
+authoritative over `.env`. Docker Compose runs infrastructure only (no backend
+container) and uses no `.env` interpolation; its values are hardcoded
+container-network internals by design.
+
+## Alert Identity
+
+Every alert carries a server-generated `alert_id` (UUID assigned once at
+construction in the aggregator) that is preserved through ClickHouse persistence,
+`GET /api/alerts`, the WebSocket stream, and the frontend contract. The frontend
+deduplicates live-buffer appends and keys table rows by `alert_id`, falling back
+to `flow_id|timestamp|threat_class` for legacy rows persisted before the column
+existed. `flow_id` alone is never an identity: multiple detectors legitimately
+emit distinct alerts for one flow, and the synthetic generator reuses flow_ids.
+
 Suppressed alerts remain auditable in storage with `suppressed=true`, but are not
 broadcast by either the FastAPI background worker or Kafka consumer.
 

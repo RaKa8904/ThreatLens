@@ -12,7 +12,7 @@ import threading
 import uuid
 from typing import List, Optional
 
-from backend.app.schemas import EvidenceSchema, ThreatAlertSchema
+from backend.app.schemas import EvidenceSchema, ThreatAlertSchema, calibrate_severity
 from engine.models.base import BaseDetectionEngine, DetectionCandidate
 from engine.models.beaconing_engine import BeaconingEngine
 from engine.models.ddos_engine import DDoSEngine
@@ -193,6 +193,7 @@ class AlertAggregator:
                 protocol=event.get("protocol"),
                 threat_class=candidate.threat_class,
                 confidence_score=normalized_score,
+                severity=calibrate_severity(normalized_score),
                 incident_id=incident_id,
                 source=event.get("source", "live"),
                 evidence=evidence,

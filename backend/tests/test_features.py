@@ -260,7 +260,9 @@ class TestSyntheticFlowGenerator(unittest.TestCase):
         self.assertGreater(ratio, 50.0)
 
     def test_mock_event_producer_batch_generation(self):
-        producer = MockEventProducer()
+        # Queue-mode harness: empty bootstrap string forces the in-memory
+        # event queue regardless of whether a real broker is reachable.
+        producer = MockEventProducer(kafka_bootstrap_servers="")
         batch = producer.produce_batch(count=30, anomaly_ratio=0.5)
         self.assertEqual(len(batch), 30)
         self.assertEqual(producer.event_queue.qsize(), 30)

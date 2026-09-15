@@ -20,6 +20,14 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional
 
+from dotenv import load_dotenv
+
+# Load the repository-root .env before any configuration-dependent import below:
+# engine.config, backend.app.storage, and engine.runtime_config snapshot
+# environment values at import time. Already-set environment variables win
+# (load_dotenv does not override), so launch scripts and tests stay authoritative.
+load_dotenv()
+
 from fastapi import FastAPI, HTTPException, Query, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 

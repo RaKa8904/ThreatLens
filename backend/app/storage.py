@@ -13,7 +13,7 @@ import os
 import threading
 from typing import Any, Dict, List, Optional
 
-from backend.app.schemas import AnalystNoteSchema, AlertStatusEnum, EvidenceSchema, ThreatAlertSchema, ThreatClassEnum
+from backend.app.schemas import AnalystNoteSchema, AlertStatusEnum, EvidenceSchema, SeverityEnum, ThreatAlertSchema, ThreatClassEnum
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +84,7 @@ class ClickHouseAlertStore:
                 flow_id String,
                 threat_class LowCardinality(String),
                 confidence_score Float32,
+                severity Nullable(String),
                 evidence_json String,
                 inter_arrival_variance Float64,
                 shannon_entropy Float32,
@@ -100,6 +101,8 @@ class ClickHouseAlertStore:
             client.command(f"ALTER TABLE {self.database}.alerts ADD COLUMN IF NOT EXISTS incident_id Nullable(String)")
             client.command(f"ALTER TABLE {self.database}.alerts ADD COLUMN IF NOT EXISTS suppressed UInt8 DEFAULT 0")
             client.command(f"ALTER TABLE {self.database}.alerts ADD COLUMN IF NOT EXISTS source LowCardinality(String) DEFAULT 'live'")
+            client.command(f"ALTER TABLE {self.database}.alerts ADD COLUMN IF NOT EXISTS alert_id String DEFAULT ''")
+            client.command(f"ALTER TABLE {self.database}.alerts ADD COLUMN IF NOT EXISTS severity Nullable(String)")
             client.command(f"CREATE TABLE IF NOT EXISTS {self.database}.alert_notes (flow_id String, text String, created_at DateTime64(3, 'UTC')) ENGINE = MergeTree() ORDER BY (flow_id, created_at)")
 
             self.client = client
@@ -135,9 +138,11 @@ class ClickHouseAlertStore:
             evidence = alert.evidence
             row = [
                 alert.timestamp,
+                alert.alert_id or "",
                 alert.flow_id,
                 alert.threat_class.value if isinstance(alert.threat_class, ThreatClassEnum) else str(alert.threat_class),
                 float(alert.confidence_score),
+                alert.severity.value if alert.severity else None,
                 evidence.model_dump_json(),
                 float(evidence.inter_arrival_variance),
                 float(evidence.shannon_entropy),
@@ -151,7 +156,7 @@ class ClickHouseAlertStore:
                 alert.source,
             ]
             columns = [
-                "timestamp", "flow_id", "threat_class", "confidence_score",
+                "timestamp", "alert_id", "flow_id", "threat_class", "confidence_score", "severity",
                 "evidence_json", "inter_arrival_variance", "shannon_entropy",
                 "byte_ratio", "fan_out_count", "ja3_hash", "details", "status", "incident_id", "suppressed", "source"
             ]
@@ -181,7 +186,7 @@ class ClickHouseAlertStore:
         if self.is_connected and self.client is not None:
             try:
                 query = f"""
-                SELECT timestamp, flow_id, threat_class, confidence_score, evidence_json, status, incident_id, suppressed, source
+                SELECT timestamp, alert_id, flow_id, threat_class, confidence_score, severity, evidence_json, status, incident_id, suppressed, source
                 FROM {self.database}.alerts
                 """
                 params: Dict[str, Any] = {"limit": limit}
@@ -197,10 +202,11 @@ class ClickHouseAlertStore:
                 result = self.client.query(query, parameters=params)
                 alerts: List[ThreatAlertSchema] = []
                 for row in result.result_rows:
-                    ts, f_id, t_class, conf, ev_json, alert_status, incident_id, suppressed, source = row
+                    ts, alert_id, f_id, t_class, conf, severity, ev_json, alert_status, incident_id, suppressed, source = row
                     ev_dict = json.loads(ev_json) if isinstance(ev_json, str) else ev_json
                     alert = ThreatAlertSchema(
                             timestamp=normalize_utc_timestamp(ts if isinstance(ts, datetime) else datetime.fromisoformat(str(ts))),
+                            alert_id=alert_id or None,
                             flow_id=f_id,
                             source_ip=ev_dict.get("source_ip"),
                             source_port=ev_dict.get("source_port"),
@@ -209,6 +215,9 @@ class ClickHouseAlertStore:
                             protocol=ev_dict.get("protocol"),
                             threat_class=ThreatClassEnum(t_class),
                             confidence_score=float(conf),
+                            # Legacy rows written before the severity column existed
+                            # carry NULL and are calibrated from their confidence.
+                            severity=SeverityEnum(severity) if severity else None,
                             status=self._status_overrides.get(f_id, AlertStatusEnum(alert_status or AlertStatusEnum.NEW.value)),
                             incident_id=incident_id,
                             suppressed=bool(suppressed),

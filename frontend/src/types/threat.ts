@@ -15,6 +15,13 @@ export enum ThreatClassEnum {
 
 export type ThreatClass = `${ThreatClassEnum}`;
 
+/**
+ * Analyst triage priority assigned by the backend's centralized severity
+ * calibration. Severity is distinct from confidence_score and must never be
+ * re-derived in the UI.
+ */
+export type SeverityLevel = "critical" | "high" | "moderate" | "low";
+
 export enum AlertStatusEnum {
   NEW = "new",
   ACKNOWLEDGED = "acknowledged",
@@ -70,6 +77,7 @@ export interface EvidenceSchema {
 
 export interface ThreatAlertSchema {
   timestamp: string; // ISO 8601 UTC timestamp string
+  alert_id?: string | null; // server-generated canonical identity; legacy rows may lack it
   flow_id: string;
   source_ip?: string | null;
   source_port?: number | null;
@@ -78,6 +86,7 @@ export interface ThreatAlertSchema {
   protocol?: string | null;
   threat_class: ThreatClassEnum | ThreatClass;
   confidence_score: number;
+  severity: SeverityLevel;
   status: AlertStatusEnum;
   incident_id?: string | null;
   suppressed: boolean;
@@ -144,3 +153,14 @@ export interface ThresholdConfigResponse {
 // Aliases for convenience in dashboard components
 export type ThreatAlert = ThreatAlertSchema;
 export type Evidence = EvidenceSchema;
+
+/**
+ * Canonical identity of one logical alert. Prefer the server-generated
+ * alert_id; fall back to flow_id + timestamp + threat_class for legacy rows
+ * persisted before alert_id existed. flow_id alone is never sufficient:
+ * multiple detectors legitimately emit distinct alerts for the same flow,
+ * and the synthetic generator reuses flow_ids across events.
+ */
+export function getAlertIdentity(alert: ThreatAlertSchema): string {
+  return alert.alert_id ?? `${alert.flow_id}|${alert.timestamp}|${alert.threat_class}`;
+}

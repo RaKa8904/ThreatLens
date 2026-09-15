@@ -9,7 +9,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { AlertStatusEnum, ThreatAlertSchema, ThreatClassEnum } from "@/types/threat";
+import { AlertStatusEnum, SeverityLevel, ThreatAlertSchema, ThreatClassEnum, getAlertIdentity } from "@/types/threat";
 import { formatTimestamp } from "@/lib/utils";
 
 interface ThreatTableProps {
@@ -49,7 +49,7 @@ export function ThreatTable({
   const knownAlertsRef = useRef<Set<string> | null>(null);
   const freshTimeoutsRef = useRef<Map<string, number>>(new Map());
 
-  const getAlertKey = (alert: ThreatAlertSchema) => `${alert.flow_id}-${alert.timestamp}`;
+  const getAlertKey = (alert: ThreatAlertSchema) => getAlertIdentity(alert);
 
   useEffect(() => {
     const currentKeys = new Set(alerts.map(getAlertKey));
@@ -79,46 +79,36 @@ export function ThreatTable({
     freshTimeoutsRef.current.forEach((timeout) => window.clearTimeout(timeout));
   }, []);
 
-  const getSeverityBadge = (score: number) => {
-    if (score >= 0.85) {
-      return (
-        <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30">
-          CRITICAL ({(score * 100).toFixed(0)}%)
-        </span>
-      );
-    }
-    if (score >= 0.70) {
-      return (
-        <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-orange-500/20 text-orange-400 border border-orange-500/40">
-          HIGH ({(score * 100).toFixed(0)}%)
-        </span>
-      );
-    }
-    if (score >= 0.50) {
-      return (
-        <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-yellow-500/20 text-yellow-400 border border-yellow-500/30">
-          MODERATE ({(score * 100).toFixed(0)}%)
-        </span>
-      );
-    }
+  // Severity styling keyed on the backend-supplied alert.severity; confidence
+  // is displayed alongside but never used to re-derive the severity band.
+  const getSeverityBadge = (severity: SeverityLevel, score: number) => {
+    const label = `${severity.toUpperCase()} (${(score * 100).toFixed(0)}%)`;
+    const styles: Record<SeverityLevel, string> = {
+      critical: "bg-rose-500/20 text-rose-400 border border-rose-500/30",
+      high: "bg-orange-500/20 text-orange-400 border border-orange-500/40",
+      moderate: "bg-yellow-500/20 text-yellow-400 border border-yellow-500/30",
+      low: "bg-zinc-700/30 text-zinc-400 border border-zinc-700/40",
+    };
     return (
-      <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-mono font-bold bg-zinc-700/30 text-zinc-400 border border-zinc-700/40">
-        LOW ({(score * 100).toFixed(0)}%)
+      <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-mono font-bold ${styles[severity]}`}>
+        {label}
       </span>
     );
   };
 
-  const getConfidenceProgressBar = (score: number) => {
+  const getConfidenceProgressBar = (score: number, severity: SeverityLevel) => {
     const width = Math.min(100, Math.max(5, Math.round(score * 100)));
-    let barColor = "bg-zinc-500";
-    if (score >= 0.85) barColor = "bg-rose-500";
-    else if (score >= 0.70) barColor = "bg-orange-500";
-    else if (score >= 0.50) barColor = "bg-yellow-500";
+    const barColor: Record<SeverityLevel, string> = {
+      critical: "bg-rose-500",
+      high: "bg-orange-500",
+      moderate: "bg-yellow-500",
+      low: "bg-zinc-500",
+    };
 
     return (
       <div className="w-[70px] bg-zinc-800 rounded-full h-1 overflow-hidden">
         <div
-          className={`h-full ${barColor} transition-all duration-300`}
+          className={`h-full ${barColor[severity]} transition-all duration-300`}
           style={{ width: `${width}%` }}
         />
       </div>
@@ -147,11 +137,17 @@ export function ThreatTable({
     }
   };
 
-  const getRowSeverityGradient = (score: number) => {
-    if (score >= 0.85) return "bg-gradient-to-r from-rose-950/25 via-rose-950/5 to-transparent border-rose-900/40";
-    if (score >= 0.70) return "bg-gradient-to-r from-orange-950/25 via-orange-950/5 to-transparent border-orange-900/40";
-    if (score >= 0.50) return "bg-gradient-to-r from-amber-950/15 via-amber-950/5 to-transparent border-amber-900/30";
-    return "bg-gradient-to-r from-zinc-900/10 via-transparent to-transparent";
+  const getRowSeverityGradient = (severity: SeverityLevel) => {
+    switch (severity) {
+      case "critical":
+        return "bg-gradient-to-r from-rose-950/25 via-rose-950/5 to-transparent border-rose-900/40";
+      case "high":
+        return "bg-gradient-to-r from-orange-950/25 via-orange-950/5 to-transparent border-orange-900/40";
+      case "moderate":
+        return "bg-gradient-to-r from-amber-950/15 via-amber-950/5 to-transparent border-amber-900/30";
+      default:
+        return "bg-gradient-to-r from-zinc-900/10 via-transparent to-transparent";
+    }
   };
 
   const getEvidenceTags = (alert: ThreatAlertSchema) => {
@@ -174,8 +170,8 @@ export function ThreatTable({
       if (Math.abs(alertTimestamp - timeWindowTimestamp) > 5000) return false;
     }
 
-    if (severityFilter === "critical" && alert.confidence_score < 0.85) return false;
-    if (severityFilter === "high" && (alert.confidence_score < 0.70 || alert.confidence_score >= 0.85)) return false;
+    if (severityFilter === "critical" && alert.severity !== "critical") return false;
+    if (severityFilter === "high" && alert.severity !== "high") return false;
 
     if (selectedClass !== "ALL") {
       const clsStr =
@@ -311,14 +307,14 @@ export function ThreatTable({
                 </TableCell>
               </TableRow>
             ) : (
-              filteredAlerts.map((alert, idx) => {
+              filteredAlerts.map((alert) => {
                 const isSelected = selectedAlert?.flow_id === alert.flow_id && selectedAlert?.timestamp === alert.timestamp;
                 const alertKey = getAlertKey(alert);
                 return (
                   <TableRow
-                    key={`${alert.flow_id}-${alert.timestamp}-${idx}`}
+                    key={alertKey}
                     onClick={() => onSelectAlert(alert)}
-                    className={`transition-colors duration-1000 border-b border-zinc-800/40 cursor-pointer ${getRowSeverityGradient(alert.confidence_score)} ${freshAlerts.has(alertKey) && viewMode === "live" ? "bg-emerald-500/[0.12]" : ""} ${
+                    className={`transition-colors duration-1000 border-b border-zinc-800/40 cursor-pointer ${getRowSeverityGradient(alert.severity)} ${freshAlerts.has(alertKey) && viewMode === "live" ? "bg-emerald-500/[0.12]" : ""} ${
                       isSelected
                         ? "bg-zinc-800/90 border-emerald-500/40"
                         : "hover:bg-zinc-900/60"
@@ -357,8 +353,8 @@ export function ThreatTable({
                     {/* Confidence & Severity */}
                     <TableCell>
                       <div className="flex items-center space-x-2">
-                        {getSeverityBadge(alert.confidence_score)}
-                        {getConfidenceProgressBar(alert.confidence_score)}
+                        {getSeverityBadge(alert.severity, alert.confidence_score)}
+                        {getConfidenceProgressBar(alert.confidence_score, alert.severity)}
                       </div>
                     </TableCell>
 

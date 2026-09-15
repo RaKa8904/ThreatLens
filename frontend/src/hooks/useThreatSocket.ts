@@ -6,7 +6,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AlertStatusEnum, ThreatAlertSchema } from "@/types/threat";
+import { AlertStatusEnum, ThreatAlertSchema, getAlertIdentity } from "@/types/threat";
 
 export type ConnectionStatus = "CONNECTING" | "CONNECTED" | "DISCONNECTED";
 
@@ -22,6 +22,10 @@ export function useThreatSocket(url?: string) {
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
   const backoffRef = useRef<number>(INITIAL_BACKOFF_MS);
+  // Set while the effect cleanup is closing the socket on purpose; prevents
+  // the onclose handler from scheduling a reconnect (StrictMode unmount,
+  // dependency change) and racing a second connection.
+  const closingRef = useRef(false);
 
   const defaultUrl = (() => {
     if (typeof window === "undefined") return "ws://localhost:8000/ws/threats";
@@ -34,8 +38,12 @@ export function useThreatSocket(url?: string) {
   const targetUrl = url || defaultUrl;
 
   const connect = useCallback(() => {
-    if (socketRef.current?.readyState === WebSocket.OPEN) return;
+    const existing = socketRef.current;
+    if (existing && (existing.readyState === WebSocket.OPEN || existing.readyState === WebSocket.CONNECTING)) {
+      return;
+    }
 
+    closingRef.current = false;
     setStatus("CONNECTING");
     try {
       const ws = new WebSocket(targetUrl);
@@ -55,6 +63,13 @@ export function useThreatSocket(url?: string) {
           setTotalReceived((prev) => prev + 1);
 
           setAlerts((prevAlerts) => {
+            const identity = getAlertIdentity(data as ThreatAlertSchema);
+            // Exact logical duplicate (e.g. a second live socket delivering the
+            // same broadcast, or a history replay overlapping the live stream):
+            // keep the existing row. Distinct alerts never share an identity.
+            if (prevAlerts.some((a) => getAlertIdentity(a) === identity)) {
+              return prevAlerts;
+            }
             const updated = [data as ThreatAlertSchema, ...prevAlerts];
             return updated.slice(0, MAX_ALERTS_BUFFER);
           });
@@ -68,8 +83,12 @@ export function useThreatSocket(url?: string) {
       };
 
       ws.onclose = () => {
-        setStatus("DISCONNECTED");
+        // A stale socket (already replaced by a newer connection) must not
+        // clobber the live one or schedule a parallel reconnect.
+        if (socketRef.current !== ws) return;
         socketRef.current = null;
+        setStatus("DISCONNECTED");
+        if (closingRef.current) return;
 
         // Schedule exponential backoff reconnect
         const timeout = Math.min(backoffRef.current, MAX_BACKOFF_MS);
@@ -87,11 +106,14 @@ export function useThreatSocket(url?: string) {
     connect();
 
     return () => {
+      closingRef.current = true;
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
       }
       if (socketRef.current) {
         socketRef.current.close();
+        socketRef.current = null;
       }
     };
   }, [connect]);

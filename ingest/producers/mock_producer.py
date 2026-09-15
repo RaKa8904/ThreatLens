@@ -27,6 +27,10 @@ import sys
 import time
 from typing import Any, Callable, Dict, Generator, List, Optional
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 logger = logging.getLogger(__name__)
 
 # Known Malicious JA3 Fingerprints
@@ -437,7 +441,14 @@ class MockEventProducer:
         self.kafka_producer = None
         self.is_kafka_connected = False
 
-        servers = kafka_bootstrap_servers or os.getenv("KAFKA_BOOTSTRAP_SERVERS")
+        # kafka_bootstrap_servers semantics: None (default) resolves the
+        # KAFKA_BOOTSTRAP_SERVERS environment variable; an explicitly passed
+        # empty string forces pure in-memory queue mode (used by the offline
+        # test harness so results never depend on a live broker).
+        if kafka_bootstrap_servers is not None:
+            servers = kafka_bootstrap_servers
+        else:
+            servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS")
         if servers:
             try:
                 from kafka import KafkaProducer  # type: ignore

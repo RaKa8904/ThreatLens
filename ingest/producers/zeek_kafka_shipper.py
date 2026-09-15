@@ -19,6 +19,10 @@ import queue
 import time
 from typing import Any, Callable, Dict, List, Optional
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 logger = logging.getLogger(__name__)
 
 TOPIC_FLOWS = "traffic-flows"
@@ -186,7 +190,14 @@ class ZeekLogShipper:
         # Session correlation state (uid -> metadata)
         self._correlation_cache: Dict[str, Dict[str, Any]] = {}
 
-        servers = kafka_bootstrap_servers or os.getenv("KAFKA_BOOTSTRAP_SERVERS")
+        # kafka_bootstrap_servers semantics: None (default) resolves the
+        # KAFKA_BOOTSTRAP_SERVERS environment variable; an explicitly passed
+        # empty string forces pure in-memory queue mode (used by the offline
+        # test harness so results never depend on a live broker).
+        if kafka_bootstrap_servers is not None:
+            servers = kafka_bootstrap_servers
+        else:
+            servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS")
         if servers:
             try:
                 from kafka import KafkaProducer  # type: ignore

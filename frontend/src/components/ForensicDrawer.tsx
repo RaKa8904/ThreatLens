@@ -3,7 +3,7 @@ import { FingerPrintIcon as Fingerprint, Alert02Icon as Alert02 } from "hugeicon
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetClose, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { AnalystNote, ThreatAlertSchema } from "@/types/threat";
+import { AnalystNote, SeverityLevel, ThreatAlertSchema } from "@/types/threat";
 import { formatTimestamp } from "@/lib/utils";
 
 interface ForensicDrawerProps {
@@ -97,11 +97,17 @@ export function ForensicDrawer({ alert, onClose }: ForensicDrawerProps) {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const getSeverityBadge = (score: number) => {
-    if (score >= 0.85) return <Badge variant="critical">CRITICAL ({Math.round(score * 100)}%)</Badge>;
-    if (score >= 0.70) return <Badge variant="high">HIGH ({Math.round(score * 100)}%)</Badge>;
-    if (score >= 0.50) return <Badge variant="medium">MODERATE ({Math.round(score * 100)}%)</Badge>;
-    return <Badge variant="low">LOW ({Math.round(score * 100)}%)</Badge>;
+  // Severity band comes from the backend's centralized calibration; the
+  // confidence percentage is displayed alongside but never used to derive it.
+  const getSeverityBadge = (severity: SeverityLevel, score: number) => {
+    const label = `${severity.toUpperCase()} (${Math.round(score * 100)}%)`;
+    const badgeVariant: Record<SeverityLevel, "critical" | "high" | "medium" | "low"> = {
+      critical: "critical",
+      high: "high",
+      moderate: "medium",
+      low: "low",
+    };
+    return <Badge variant={badgeVariant[severity]}>{label}</Badge>;
   };
 
   const processingState = getLatencyState(alert.processing_latency_ms);
@@ -140,7 +146,7 @@ export function ForensicDrawer({ alert, onClose }: ForensicDrawerProps) {
             <div className="rounded-lg border border-slate-800/80 bg-slate-900/60 p-4 space-y-3 lg:p-5">
               <div className="flex items-center justify-between">
                 <span className="text-slate-400 text-[11px] font-mono uppercase">Classified Threat</span>
-                {getSeverityBadge(alert.confidence_score)}
+                {getSeverityBadge(alert.severity, alert.confidence_score)}
               </div>
               <div className="text-[length:var(--text-display)] leading-tight font-bold text-slate-100 font-mono">{threatClass}</div>
               <div className="text-[11px] text-slate-300 bg-slate-950/70 p-3 rounded border border-slate-800/60 font-mono leading-relaxed">{evidence.details}</div>

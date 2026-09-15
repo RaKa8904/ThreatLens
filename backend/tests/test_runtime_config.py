@@ -21,6 +21,8 @@ import unittest
 from datetime import datetime, timedelta, timezone
 
 os.environ["ENABLE_BACKGROUND_GENERATOR"] = "false"
+# Keep test runs out of the developer ClickHouse database (store connects at import below)
+os.environ.setdefault("CLICKHOUSE_DB", "threatlens_test")
 
 from fastapi.testclient import TestClient
 

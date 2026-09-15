@@ -16,6 +16,8 @@ import unittest
 
 # Disable background generator task during test execution to prevent background thread contention
 os.environ["ENABLE_BACKGROUND_GENERATOR"] = "false"
+# Keep test runs out of the developer ClickHouse database (store connects at import below)
+os.environ.setdefault("CLICKHOUSE_DB", "threatlens_test")
 
 from fastapi.testclient import TestClient
 

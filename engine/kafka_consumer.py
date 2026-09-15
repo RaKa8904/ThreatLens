@@ -51,7 +51,14 @@ class KafkaIngestConsumer:
         self.is_kafka_connected = False
         self._is_running = False
 
-        servers = kafka_bootstrap_servers or os.getenv("KAFKA_BOOTSTRAP_SERVERS")
+        # kafka_bootstrap_servers semantics: None (default) resolves the
+        # KAFKA_BOOTSTRAP_SERVERS environment variable; an explicitly passed
+        # empty string forces pure in-memory queue mode (used by the offline
+        # test harness so results never depend on a live broker).
+        if kafka_bootstrap_servers is not None:
+            servers = kafka_bootstrap_servers
+        else:
+            servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS")
         if servers:
             try:
                 from kafka import KafkaConsumer  # type: ignore

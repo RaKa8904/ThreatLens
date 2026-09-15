@@ -80,9 +80,10 @@ export function App() {
     }
   };
 
-  // Compute summary stats from buffered alerts
-  const criticalCount = alerts.filter((a) => a.confidence_score >= 0.85).length;
-  const highCount = alerts.filter((a) => a.confidence_score >= 0.70 && a.confidence_score < 0.85).length;
+  // Compute summary stats from buffered alerts (severity comes from the
+  // backend's centralized calibration — never re-derived from confidence here)
+  const criticalCount = alerts.filter((a) => a.severity === "critical").length;
+  const highCount = alerts.filter((a) => a.severity === "high").length;
   const avgConfidence = alerts.length > 0
     ? (alerts.reduce((sum, a) => sum + a.confidence_score, 0) / alerts.length) * 100
     : 0;

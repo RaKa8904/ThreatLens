@@ -171,7 +171,9 @@ class TestZeekLogShipperAndConsumer(unittest.TestCase):
 
     def setUp(self):
         self.shared_queue = queue.Queue()
-        self.shipper = ZeekLogShipper(event_queue=self.shared_queue)
+        # Queue-mode harness: empty bootstrap string forces the in-memory
+        # event queue regardless of whether a real broker is reachable.
+        self.shipper = ZeekLogShipper(event_queue=self.shared_queue, kafka_bootstrap_servers="")
         self.store = SlidingWindowStore(use_redis=False)
         self.storage = ClickHouseAlertStore(auto_connect=False)
         self.pipeline = DetectionPipeline(store=self.store, aggregator=AlertAggregator())
@@ -179,6 +181,7 @@ class TestZeekLogShipperAndConsumer(unittest.TestCase):
             pipeline=self.pipeline,
             storage=self.storage,
             event_queue=self.shared_queue,
+            kafka_bootstrap_servers="",
         )
 
     def test_uid_cross_protocol_correlation(self):
@@ -243,7 +246,9 @@ class TestPCAPReplayAttacks(unittest.TestCase):
 
     def setUp(self):
         self.shared_queue = queue.Queue()
-        self.shipper = ZeekLogShipper(event_queue=self.shared_queue)
+        # Queue-mode harness: empty bootstrap string forces the in-memory
+        # event queue regardless of whether a real broker is reachable.
+        self.shipper = ZeekLogShipper(event_queue=self.shared_queue, kafka_bootstrap_servers="")
         self.store = SlidingWindowStore(use_redis=False)
         self.storage = ClickHouseAlertStore(auto_connect=False)
         self.pipeline = DetectionPipeline(store=self.store, aggregator=AlertAggregator())
@@ -251,6 +256,7 @@ class TestPCAPReplayAttacks(unittest.TestCase):
             pipeline=self.pipeline,
             storage=self.storage,
             event_queue=self.shared_queue,
+            kafka_bootstrap_servers="",
         )
 
     def test_ddos_syn_flood_replay_detection(self):
@@ -442,7 +448,9 @@ class TestFileReplayExecution(unittest.TestCase):
 
     def setUp(self):
         self.shared_queue = queue.Queue()
-        self.shipper = ZeekLogShipper(event_queue=self.shared_queue)
+        # Queue-mode harness: empty bootstrap string forces the in-memory
+        # event queue regardless of whether a real broker is reachable.
+        self.shipper = ZeekLogShipper(event_queue=self.shared_queue, kafka_bootstrap_servers="")
         self.store = SlidingWindowStore(use_redis=False)
         self.storage = ClickHouseAlertStore(auto_connect=False)
         self.pipeline = DetectionPipeline(store=self.store, aggregator=AlertAggregator())
@@ -450,6 +458,7 @@ class TestFileReplayExecution(unittest.TestCase):
             pipeline=self.pipeline,
             storage=self.storage,
             event_queue=self.shared_queue,
+            kafka_bootstrap_servers="",
         )
 
     def test_batch_file_replay(self):

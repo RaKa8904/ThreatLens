@@ -6,6 +6,7 @@ sliding-window anomaly detection, and threat alert serialization.
 """
 
 import ipaddress
+import uuid
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, List, Literal, Optional
@@ -30,6 +31,63 @@ class AlertStatusEnum(str, Enum):
     INVESTIGATING = "investigating"
     RESOLVED = "resolved"
     FALSE_POSITIVE = "false_positive"
+
+
+class SeverityEnum(str, Enum):
+    """
+    Analyst triage priority assigned to an alert by the centralized severity
+    calibration (see `calibrate_severity`). Severity answers "how urgently
+    should an analyst look at this?" and is deliberately distinct from
+    `confidence_score`, which answers "how strongly does the detector support
+    this detection?".
+    """
+
+    CRITICAL = "critical"
+    HIGH = "high"
+    MODERATE = "moderate"
+    LOW = "low"
+
+
+# Severity calibration boundaries, chosen against the observed detector
+# confidence distribution (see calibrate_severity docstring for rationale).
+SEVERITY_CRITICAL_THRESHOLD = 0.95
+SEVERITY_HIGH_THRESHOLD = 0.90
+SEVERITY_MODERATE_THRESHOLD = 0.80
+
+
+def calibrate_severity(confidence_score: float) -> SeverityEnum:
+    """
+    The single authoritative confidence-to-severity calibration for ThreatLens.
+
+    Severity is the analyst triage priority derived from the detector's final
+    normalized confidence (including any existing corroboration / attack-chain
+    bonuses already applied by the aggregator). It is calibrated against the
+    actual confidence distribution the six detection engines produce:
+
+      - DDoS     0.75-0.99 (z-score scaled; SYN floods floored at 0.92)
+      - C2       0.82-0.99 (base + IAT-variance/heartbeat bonuses)
+      - DGA      0.80-0.99 (base + entropy/length/record-type bonuses)
+      - Malware  0.96 fixed (known-malicious JA3/JA4 fingerprint match)
+      - Recon    0.80-0.98 (base + target-cardinality bonus)
+      - Exfil    0.82-0.99 (base + volume/asymmetry bonuses)
+
+    Boundaries:
+      >= 0.95 CRITICAL  Near-cap scores: known-bad fingerprint matches and
+                        fully-bonused detections. Act immediately.
+      >= 0.90 HIGH      Strong detections with corroboration headroom
+                        (e.g. clean C2 beacon trains, mid-bonus exfil).
+      >= 0.80 MODERATE  Base-level single-gate triggers (e.g. recon scans,
+                        marginal entropy DGA, weak beacon regularity).
+      <  0.80 LOW       Minimal-signal detections (e.g. a PPS surge that
+                        only just cleared the 3-sigma gate). Watch list.
+    """
+    if confidence_score >= SEVERITY_CRITICAL_THRESHOLD:
+        return SeverityEnum.CRITICAL
+    if confidence_score >= SEVERITY_HIGH_THRESHOLD:
+        return SeverityEnum.HIGH
+    if confidence_score >= SEVERITY_MODERATE_THRESHOLD:
+        return SeverityEnum.MODERATE
+    return SeverityEnum.LOW
 
 
 class AnalystNoteCreate(BaseModel):
@@ -276,6 +334,15 @@ class ThreatAlertSchema(BaseModel):
         default_factory=lambda: datetime.now(timezone.utc),
         description="UTC timestamp when the threat alert was evaluated",
     )
+    alert_id: Optional[str] = Field(
+        default_factory=lambda: str(uuid.uuid4()),
+        description=(
+            "Server-generated canonical identity of this alert, assigned once at "
+            "construction and preserved through persistence, the REST API, and the "
+            "WebSocket stream. Legacy rows persisted before this field existed may "
+            "carry None; consumers fall back to flow_id + timestamp + threat_class."
+        ),
+    )
     flow_id: str = Field(
         ...,
         description="Unique network flow identifier (e.g., 'src_ip:src_port->dst_ip:dst_port')",
@@ -294,6 +361,16 @@ class ThreatAlertSchema(BaseModel):
         description="Model or heuristic confidence probability score between 0.0 and 1.0",
         ge=0.0,
         le=1.0,
+    )
+    severity: Optional[SeverityEnum] = Field(
+        default=None,
+        description=(
+            "Analyst triage priority calibrated from the final confidence score "
+            "(see calibrate_severity). Always populated on a validated alert: "
+            "records reconstructed without a stored severity (e.g. rows written "
+            "before the severity column existed) are calibrated from their "
+            "confidence score through the same function."
+        ),
     )
     status: AlertStatusEnum = AlertStatusEnum.NEW
     incident_id: Optional[str] = None
@@ -316,6 +393,13 @@ class ThreatAlertSchema(BaseModel):
         description="Structured forensic evidence supporting the alert classification",
     )
 
+    @model_validator(mode="after")
+    def calibrate_severity_when_unspecified(self) -> "ThreatAlertSchema":
+        """Fills severity from the canonical calibration when not supplied."""
+        if self.severity is None:
+            self.severity = calibrate_severity(self.confidence_score)
+        return self
+
     model_config = ConfigDict(
         populate_by_name=True,
         json_schema_extra={
@@ -324,6 +408,7 @@ class ThreatAlertSchema(BaseModel):
                 "flow_id": "192.168.1.105:54321->10.0.0.1:443",
                 "threat_class": "Botnet C2 Beaconing",
                 "confidence_score": 0.94,
+                "severity": "high",
                 "evidence": {
                     "inter_arrival_variance": 0.0012,
                     "shannon_entropy": 3.82,
