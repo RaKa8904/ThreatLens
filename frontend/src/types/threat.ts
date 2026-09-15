@@ -15,6 +15,36 @@ export enum ThreatClassEnum {
 
 export type ThreatClass = `${ThreatClassEnum}`;
 
+export function normalizeThreatClass(raw: any): string {
+  if (!raw) return "";
+  if (typeof raw === "string") return raw;
+  if (typeof raw === "object" && raw !== null) {
+    if (typeof raw.value === "string") return raw.value;
+    if (typeof raw.name === "string") return raw.name;
+    if (typeof raw.threat_class === "string") return raw.threat_class;
+  }
+  return String(raw);
+}
+
+export function matchesThreatClass(alertClassRaw: any, selectedClass: string): boolean {
+  if (!selectedClass || selectedClass === "ALL") return true;
+  const alertStr = normalizeThreatClass(alertClassRaw).toLowerCase().trim();
+  const targetStr = normalizeThreatClass(selectedClass).toLowerCase().trim();
+  if (alertStr === targetStr) return true;
+
+  const aliases: Record<string, string[]> = {
+    "volumetric & protocol ddos": ["volumetric & protocol ddos", "volumetric_dos", "protocol dos", "syn flood", "ddos", "dos"],
+    "botnet c2 beaconing": ["botnet c2 beaconing", "botnet_c2", "c2 beaconing", "botnet c2", "beaconing"],
+    "dga & dns tunneling": ["dga & dns tunneling", "dga_dns", "dns tunneling", "dga"],
+    "encrypted malware": ["encrypted malware", "encrypted_malware", "malware"],
+    "reconnaissance scan": ["reconnaissance scan", "recon_scan", "recon sweep", "port scan", "subnet sweep", "reconnaissance"],
+    "data exfiltration": ["data exfiltration", "data_exfil", "exfiltration", "exfil"],
+  };
+
+  const targetAliases = aliases[targetStr] || [targetStr];
+  return targetAliases.some((alias) => alertStr.includes(alias) || alias.includes(alertStr));
+}
+
 /**
  * Analyst triage priority assigned by the backend's centralized severity
  * calibration. Severity is distinct from confidence_score and must never be

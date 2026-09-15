@@ -9,7 +9,15 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { AlertStatusEnum, SeverityLevel, ThreatAlertSchema, ThreatClassEnum, getAlertIdentity } from "@/types/threat";
+import {
+  AlertStatusEnum,
+  SeverityLevel,
+  ThreatAlertSchema,
+  ThreatClassEnum,
+  getAlertIdentity,
+  matchesThreatClass,
+  normalizeThreatClass,
+} from "@/types/threat";
 import { formatTimestamp } from "@/lib/utils";
 
 interface ThreatTableProps {
@@ -82,15 +90,16 @@ export function ThreatTable({
   // Severity styling keyed on the backend-supplied alert.severity; confidence
   // is displayed alongside but never used to re-derive the severity band.
   const getSeverityBadge = (severity: SeverityLevel, score: number) => {
-    const label = `${severity.toUpperCase()} (${(score * 100).toFixed(0)}%)`;
+    const label = `${severity ? severity.toUpperCase() : "INFO"} (${(score * 100).toFixed(0)}%)`;
     const styles: Record<SeverityLevel, string> = {
       critical: "bg-rose-500/20 text-rose-400 border border-rose-500/30",
       high: "bg-orange-500/20 text-orange-400 border border-orange-500/40",
       moderate: "bg-yellow-500/20 text-yellow-400 border border-yellow-500/30",
       low: "bg-zinc-700/30 text-zinc-400 border border-zinc-700/40",
     };
+    const style = styles[severity] || styles.low;
     return (
-      <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-mono font-bold ${styles[severity]}`}>
+      <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-mono font-bold ${style}`}>
         {label}
       </span>
     );
@@ -104,11 +113,12 @@ export function ThreatTable({
       moderate: "bg-yellow-500",
       low: "bg-zinc-500",
     };
+    const color = barColor[severity] || barColor.low;
 
     return (
       <div className="w-[70px] bg-zinc-800 rounded-full h-1 overflow-hidden">
         <div
-          className={`h-full ${barColor[severity]} transition-all duration-300`}
+          className={`h-full ${color} transition-all duration-300`}
           style={{ width: `${width}%` }}
         />
       </div>
@@ -153,10 +163,11 @@ export function ThreatTable({
   const getEvidenceTags = (alert: ThreatAlertSchema) => {
     const tags: string[] = [];
     const evidence = alert.evidence;
+    if (!evidence) return tags;
     if (evidence.ja3_hash || evidence.ja4_hash || evidence.sni) tags.push("TLS");
     if (evidence.splt_packet_sizes || evidence.splt_interarrival_times) tags.push("SPLT");
     if (evidence.fft_concentration !== null && evidence.fft_concentration !== undefined) tags.push("FFT");
-    if (evidence.dns_query || evidence.ngram_score !== null && evidence.ngram_score !== undefined) tags.push("DNS");
+    if (evidence.dns_query || (evidence.ngram_score !== null && evidence.ngram_score !== undefined)) tags.push("DNS");
     if (evidence.z_score !== null && evidence.z_score !== undefined) tags.push("Z-SCORE");
     if (evidence.unique_destination_hosts !== null && evidence.unique_destination_hosts !== undefined) tags.push("FAN-OUT");
     if (evidence.total_uploaded_bytes !== null && evidence.total_uploaded_bytes !== undefined) tags.push("EGRESS");
@@ -167,28 +178,35 @@ export function ThreatTable({
   const filteredAlerts = alerts.filter((alert) => {
     if (timeWindowTimestamp !== null) {
       const alertTimestamp = new Date(alert.timestamp).getTime();
-      if (Math.abs(alertTimestamp - timeWindowTimestamp) > 5000) return false;
+      if (isNaN(alertTimestamp) || Math.abs(alertTimestamp - timeWindowTimestamp) > 5000) return false;
     }
 
-    if (severityFilter === "critical" && alert.severity !== "critical") return false;
-    if (severityFilter === "high" && alert.severity !== "high") return false;
+    if (severityFilter === "critical" && String(alert.severity).toLowerCase() !== "critical") return false;
+    if (severityFilter === "high" && String(alert.severity).toLowerCase() !== "high") return false;
 
-    if (selectedClass !== "ALL") {
-      const clsStr =
-        typeof alert.threat_class === "string"
-          ? alert.threat_class
-          : alert.threat_class;
-      if (clsStr !== selectedClass) return false;
+    if (selectedClass !== "ALL" && !matchesThreatClass(alert.threat_class, selectedClass)) {
+      return false;
     }
 
-    if (alert.confidence_score < minConfidence) return false;
+    const conf = typeof alert.confidence_score === "number" ? alert.confidence_score : parseFloat(String(alert.confidence_score || 0));
+    if (conf < minConfidence) return false;
 
     if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      const matchFlow = alert.flow_id.toLowerCase().includes(q);
-      const matchClass = alert.threat_class.toLowerCase().includes(q);
-      const matchDetails = alert.evidence.details.toLowerCase().includes(q);
-      if (!matchFlow && !matchClass && !matchDetails) return false;
+      const q = searchQuery.toLowerCase().trim();
+      const flowStr = String(alert.flow_id || "").toLowerCase();
+      const classStr = normalizeThreatClass(alert.threat_class).toLowerCase();
+      const detailsStr = String(alert.evidence?.details || "").toLowerCase();
+      const srcIpStr = String(alert.source_ip || alert.evidence?.source_ip || "").toLowerCase();
+      const dstIpStr = String(alert.destination_ip || alert.evidence?.destination_ip || "").toLowerCase();
+
+      const matches =
+        flowStr.includes(q) ||
+        classStr.includes(q) ||
+        detailsStr.includes(q) ||
+        srcIpStr.includes(q) ||
+        dstIpStr.includes(q);
+
+      if (!matches) return false;
     }
 
     return true;
@@ -281,6 +299,22 @@ export function ThreatTable({
               className="w-16 accent-emerald-400 cursor-pointer"
             />
           </div>
+
+          {(selectedClass !== "ALL" || minConfidence > 0 || searchQuery.trim() !== "" || severityFilter !== null || timeWindowTimestamp !== null) && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setSelectedClass("ALL");
+                setMinConfidence(0.0);
+                setSearchQuery("");
+                if (onClearTimeWindow) onClearTimeWindow();
+              }}
+              className="h-7 px-2 text-[10px] font-mono text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 border border-rose-500/20"
+            >
+              RESET FILTERS
+            </Button>
+          )}
         </div>
       </div>
 
