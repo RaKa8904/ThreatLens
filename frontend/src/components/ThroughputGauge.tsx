@@ -50,7 +50,14 @@ export function ThroughputGauge({
   selectedWindow = null,
   onWindowSelect,
 }: ThroughputGaugeProps) {
-  const [data, setData] = useState<ThroughputPoint[]>([]);
+  const [data, setData] = useState<ThroughputPoint[]>(() => {
+    try {
+      const stored = sessionStorage.getItem("threatlens_throughput_history");
+      return stored ? JSON.parse(stored) : [];
+    } catch {
+      return [];
+    }
+  });
   const [currentFlows, setCurrentFlows] = useState<number>(0);
   const [currentPPS, setCurrentPPS] = useState<number>(0);
   const [peakMbps, setPeakMbps] = useState<number>(0);
@@ -79,7 +86,9 @@ export function ThroughputGauge({
 
         setData((prev) => {
           const next = [...prev, { time: timeLabel, timestamp, flows, pps, mbps }];
-          return next.slice(-MAX_HISTORY_POINTS);
+          const trimmed = next.slice(-MAX_HISTORY_POINTS);
+          try { sessionStorage.setItem("threatlens_throughput_history", JSON.stringify(trimmed.slice(-120))); } catch {}
+          return trimmed;
         });
       } catch {
         if (!isMounted) return;
@@ -95,7 +104,9 @@ export function ThroughputGauge({
 
         setData((prev) => {
           const next = [...prev, { time: timeLabel, timestamp, flows: mockFlows, pps: mockPPS, mbps: mockMbps }];
-          return next.slice(-MAX_HISTORY_POINTS);
+          const trimmed = next.slice(-MAX_HISTORY_POINTS);
+          try { sessionStorage.setItem("threatlens_throughput_history", JSON.stringify(trimmed.slice(-120))); } catch {}
+          return trimmed;
         });
       }
     };
