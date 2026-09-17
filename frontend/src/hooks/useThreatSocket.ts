@@ -17,22 +17,21 @@ const MAX_BACKOFF_MS = 15000;
 export function useThreatSocket(url?: string) {
   const [alerts, setAlerts] = useState<ThreatAlertSchema[]>([]);
   const [status, setStatus] = useState<ConnectionStatus>("CONNECTING");
-  const [totalReceived, setTotalReceived] = useState<number>(0);
+  const [sessionReceived, setSessionReceived] = useState<number>(0);
+  const [archiveTotal, setArchiveTotal] = useState<number>(0);
 
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
   const backoffRef = useRef<number>(INITIAL_BACKOFF_MS);
-  // Set while the effect cleanup is closing the socket on purpose; prevents
-  // the onclose handler from scheduling a reconnect (StrictMode unmount,
-  // dependency change) and racing a second connection.
   const closingRef = useRef(false);
 
   const defaultUrl = (() => {
     if (typeof window === "undefined") return "ws://localhost:8000/ws/threats";
     const loc = window.location;
     const protocol = loc.protocol === "https:" ? "wss:" : "ws:";
-    // If running with Vite proxy or direct port
-    return `${protocol}//${loc.hostname}:8000/ws/threats`;
+    const token = localStorage.getItem("threatlens_token");
+    const tokenQuery = token ? `?token=${encodeURIComponent(token)}` : "";
+    return `${protocol}//${loc.hostname}:8000/ws/threats${tokenQuery}`;
   })();
 
   const targetUrl = url || defaultUrl;
@@ -57,16 +56,13 @@ export function useThreatSocket(url?: string) {
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
-          // Filter out heartbeat ping/pong messages
           if (data.type === "heartbeat" || data.type === "pong") return;
 
-          setTotalReceived((prev) => prev + 1);
+          setSessionReceived((prev) => prev + 1);
+          setArchiveTotal((prev) => prev + 1);
 
           setAlerts((prevAlerts) => {
             const identity = getAlertIdentity(data as ThreatAlertSchema);
-            // Exact logical duplicate (e.g. a second live socket delivering the
-            // same broadcast, or a history replay overlapping the live stream):
-            // keep the existing row. Distinct alerts never share an identity.
             if (prevAlerts.some((a) => getAlertIdentity(a) === identity)) {
               return prevAlerts;
             }
@@ -83,14 +79,11 @@ export function useThreatSocket(url?: string) {
       };
 
       ws.onclose = () => {
-        // A stale socket (already replaced by a newer connection) must not
-        // clobber the live one or schedule a parallel reconnect.
         if (socketRef.current !== ws) return;
         socketRef.current = null;
         setStatus("DISCONNECTED");
         if (closingRef.current) return;
 
-        // Schedule exponential backoff reconnect
         const timeout = Math.min(backoffRef.current, MAX_BACKOFF_MS);
         backoffRef.current = Math.floor(backoffRef.current * 1.5);
         reconnectTimeoutRef.current = window.setTimeout(() => {
@@ -103,9 +96,43 @@ export function useThreatSocket(url?: string) {
   }, [targetUrl]);
 
   useEffect(() => {
+    let active = true;
+
+    async function hydrateInitialState() {
+      try {
+        const [alertsRes, metricsRes] = await Promise.all([
+          fetch("/api/alerts?limit=50"),
+          fetch("/api/metrics/throughput"),
+        ]);
+
+        if (active && alertsRes.ok) {
+          const fetchedAlerts: ThreatAlertSchema[] = await alertsRes.json();
+          setAlerts((prev) => {
+            if (prev.length === 0) return fetchedAlerts;
+            const existingIds = new Set(prev.map((a) => getAlertIdentity(a)));
+            const deduplicatedFetched = fetchedAlerts.filter(
+              (a) => !existingIds.has(getAlertIdentity(a))
+            );
+            return [...prev, ...deduplicatedFetched].slice(0, MAX_ALERTS_BUFFER);
+          });
+        }
+
+        if (active && metricsRes.ok) {
+          const metrics = await metricsRes.json();
+          if (typeof metrics.total_alerts === "number") {
+            setArchiveTotal(metrics.total_alerts);
+          }
+        }
+      } catch {
+        // Hydration fallback
+      }
+    }
+
+    hydrateInitialState();
     connect();
 
     return () => {
+      active = false;
       closingRef.current = true;
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
@@ -126,11 +153,18 @@ export function useThreatSocket(url?: string) {
     setAlerts((current) => current.map((alert) => alert.flow_id === flowId ? { ...alert, status } : alert));
   }, []);
 
+  const formattedArchiveTotal = archiveTotal >= 1000
+    ? `${(archiveTotal / 1000).toFixed(1)}k`
+    : `${archiveTotal}`;
+
   return {
     alerts,
     status,
     clearAlerts,
     updateAlertStatus,
-    totalReceived,
+    totalReceived: sessionReceived || archiveTotal,
+    sessionReceived,
+    archiveTotal,
+    formattedArchiveTotal,
   };
 }

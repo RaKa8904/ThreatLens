@@ -250,8 +250,13 @@ def list_available_pcaps():
     return pcaps
 
 
+MAX_PCAP_SIZE_BYTES = 50 * 1024 * 1024  # 50 MB Cap
+
+
 @router.post("/upload", status_code=status.HTTP_201_CREATED)
-async def upload_pcap_file(file: UploadFile = File(...)):
+async def upload_pcap_file(
+    file: UploadFile = File(...),
+):
     """
     Accepts multipart/form-data PCAP uploads (.pcap, .pcapng).
     Validates magic bytes / extensions and securely saves to pcaps/<filename>.
@@ -276,6 +281,13 @@ async def upload_pcap_file(file: UploadFile = File(...)):
     target_path = PCAP_DIR / filename
     await file.seek(0)
     content = await file.read()
+
+    # Security check: Limit upload size to 50MB
+    if len(content) > MAX_PCAP_SIZE_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"PCAP upload exceeds maximum allowed file size of {MAX_PCAP_SIZE_BYTES // (1024 * 1024)}MB.",
+        )
 
     with open(target_path, "wb") as f:
         f.write(content)

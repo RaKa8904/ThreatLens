@@ -8,6 +8,7 @@ import { ThreatTable } from "@/components/ThreatTable";
 import { ForensicDrawer } from "@/components/ForensicDrawer";
 import { DetectionConfig } from "@/components/DetectionConfig";
 import { ReplayModal } from "@/components/ReplayModal";
+import { LoginPage, UserProfile } from "@/components/LoginPage";
 import { useThreatSocket } from "@/hooks/useThreatSocket";
 import { ThreatAlertSchema } from "@/types/threat";
 
@@ -15,7 +16,7 @@ type SeverityFilter = "critical" | "high" | null;
 type AlertViewMode = "live" | "archive";
 
 export function App() {
-  const { alerts, status, totalReceived, updateAlertStatus } = useThreatSocket();
+  const { alerts, status, totalReceived, sessionReceived, formattedArchiveTotal, updateAlertStatus } = useThreatSocket();
   const [selectedAlert, setSelectedAlert] = useState<ThreatAlertSchema | null>(null);
   const [alertViewMode, setAlertViewMode] = useState<AlertViewMode>("live");
   const [archiveAlerts, setArchiveAlerts] = useState<ThreatAlertSchema[]>([]);
@@ -25,6 +26,15 @@ export function App() {
   const [selectedTrafficWindow, setSelectedTrafficWindow] = useState<TrafficWindow | null>(null);
   const [configOpen, setConfigOpen] = useState(false);
   const [replayOpen, setReplayOpen] = useState(false);
+  const [user, setUser] = useState<UserProfile | null>(() => {
+    try {
+      const savedUser = localStorage.getItem("threatlens_user");
+      const token = localStorage.getItem("threatlens_token");
+      return savedUser && token ? JSON.parse(savedUser) : null;
+    } catch {
+      return null;
+    }
+  });
 
   useEffect(() => {
     if (alertViewMode !== "archive") return;
@@ -45,6 +55,23 @@ export function App() {
 
     return () => { mounted = false; };
   }, [alertViewMode, archivePage]);
+
+  // If user is not authenticated, render dedicated full-screen SOC Login Page first!
+  if (!user) {
+    return (
+      <LoginPage
+        onLoginSuccess={(_token, userProfile) => {
+          setUser(userProfile);
+        }}
+      />
+    );
+  }
+
+  const handleLogout = () => {
+    localStorage.removeItem("threatlens_token");
+    localStorage.removeItem("threatlens_user");
+    setUser(null);
+  };
 
   const setAlertMode = (mode: AlertViewMode) => {
     setAlertViewMode(mode);
@@ -110,6 +137,10 @@ export function App() {
       <Navbar
         status={status}
         totalAlerts={totalReceived}
+        sessionReceived={sessionReceived}
+        formattedArchiveTotal={formattedArchiveTotal}
+        user={user}
+        onLogout={handleLogout}
         onOpenConfig={() => setConfigOpen(true)}
         onOpenReplay={() => setReplayOpen(true)}
       />

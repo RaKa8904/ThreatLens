@@ -28,9 +28,20 @@ from dotenv import load_dotenv
 # (load_dotenv does not override), so launch scripts and tests stay authoritative.
 load_dotenv()
 
-from fastapi import FastAPI, HTTPException, Query, Response, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 
+from backend.app.auth import (
+    LoginRequest,
+    Token,
+    User,
+    authenticate_user,
+    create_jwt_token,
+    get_current_user,
+    require_role,
+    validate_websocket_token,
+)
 from backend.app.routers.replay import router as replay_router
 from backend.app.schemas import (
     AnalystNoteCreate,
@@ -222,7 +233,22 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Enable CORS for local dev frontends (Vite: 5173, Next.js/CRA: 3000)
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Enforces strict enterprise HTTP security headers against XSS, Clickjacking, and MIME sniffing."""
+    async def dispatch(self, request: Request, call_next):
+        response: Response = await call_next(request)
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        response.headers["Content-Security-Policy"] = "default-src 'self'; connect-src 'self' ws: wss: http: https:;"
+        return response
+
+
+app.add_middleware(SecurityHeadersMiddleware)
+
+# Enable Hardened CORS for local dev frontends
 cors_origins_env = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000")
 origins = [o.strip() for o in cors_origins_env.split(",") if o.strip()]
 
@@ -230,11 +256,36 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept"],
 )
 
 app.include_router(replay_router)
+
+
+# =============================================================================
+# Authentication Endpoints
+# =============================================================================
+
+@app.post("/api/auth/token", response_model=Token, tags=["Authentication"])
+@app.post("/api/auth/login", response_model=Token, tags=["Authentication"])
+def login_for_access_token(payload: LoginRequest):
+    """Authenticates analyst/admin credentials and returns an HMAC-SHA256 JWT access token."""
+    user = authenticate_user(payload.username, payload.password)
+    if not user:
+        raise HTTPException(
+            status_code=401,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    token_str = create_jwt_token({"sub": user.username, "role": user.role})
+    return Token(access_token=token_str, token_type="bearer", user=user)
+
+
+@app.get("/api/auth/me", response_model=User, tags=["Authentication"])
+def read_current_user_profile(current_user: Optional[User] = Depends(get_current_user)):
+    """Returns profile and active role of currently authenticated user."""
+    return current_user
 
 
 # =============================================================================
@@ -582,10 +633,16 @@ def delete_suppression_rule(rule_id: str):
 # =============================================================================
 
 @app.websocket("/ws/threats")
-async def websocket_threat_feed(websocket: WebSocket):
+async def websocket_threat_feed(websocket: WebSocket, token: Optional[str] = Query(None)):
     """
     Direct low-latency WebSocket feed streaming live threat alerts to connected SOC consoles.
+    Validates token authorization upon upgrade.
     """
+    user = await validate_websocket_token(token)
+    if user is None:
+        await websocket.close(code=1008, reason="Unauthorized WebSocket connection")
+        return
+
     await ws_manager.connect(websocket)
     try:
         # Only replay persistent archive if SIMULATION_REPLAY_HISTORY is explicitly enabled
