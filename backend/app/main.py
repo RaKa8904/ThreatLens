@@ -16,9 +16,10 @@ import tempfile
 import logging
 import os
 import queue
+import random
 import time
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from dotenv import load_dotenv
 
@@ -305,8 +306,8 @@ async def streamlined_pcap_network_worker():
     attack_wave_idx = 0
     benign_counter = 0
 
-    try:
-        while True:
+    while True:
+        try:
             # 1. Healthy benign background enterprise telemetry
             event = generate_benign_enterprise_flow()
             record_flow_telemetry(event)
@@ -354,11 +355,12 @@ async def streamlined_pcap_network_worker():
 
             # Responsive, streamlined flow spacing: ~0.30s between background flows (~3.3 flows/sec)
             await asyncio.sleep(0.30)
-
-    except asyncio.CancelledError:
-        logger.info("ThreatLens Streamlined Network Worker stopped.")
-    except Exception as exc:
-        logger.error("Error in Streamlined Network Worker: %s", exc)
+        except asyncio.CancelledError:
+            logger.info("ThreatLens Streamlined Network Worker cancelled.")
+            break
+        except Exception as loop_exc:
+            logger.error("Error in streamlined network cycle: %s", loop_exc, exc_info=True)
+            await asyncio.sleep(0.5)
 
 
 @asynccontextmanager
