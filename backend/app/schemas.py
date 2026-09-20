@@ -385,7 +385,7 @@ class ThreatAlertSchema(BaseModel):
         default=None,
         description="Id of the suppression rule that withheld this alert, when suppressed.",
     )
-    source: Literal["live", "replay"] = "live"
+    source: str = "live"
     ingest_latency_ms: Optional[float] = Field(default=None, ge=0.0)
     processing_latency_ms: Optional[float] = Field(default=None, ge=0.0)
     evidence: EvidenceSchema = Field(

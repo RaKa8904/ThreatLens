@@ -71,6 +71,25 @@ class ClickHouseAlertStore:
         """Attempts to establish connection with ClickHouse and initialize tables."""
         import time
         self._last_reconnect_attempt = time.time()
+
+        # Fast socket pre-flight check to avoid urllib3 retry flood when ClickHouse daemon is offline
+        import socket
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(0.2)
+            res = sock.connect_ex((self.host, self.port))
+            sock.close()
+            if res != 0:
+                self.client = None
+                self.is_connected = False
+                self.fallback_active = True
+                return False
+        except Exception:
+            self.client = None
+            self.is_connected = False
+            self.fallback_active = True
+            return False
+
         try:
             import clickhouse_connect
 

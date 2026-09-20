@@ -185,34 +185,38 @@ async def real_pcap_stream_worker():
                     continue
 
                 for flow in flows:
-                    # Align timestamp to current epoch for sliding window analysis
-                    flow["timestamp"] = time.time()
-                    flow["source"] = f"pcap:{pcap_path.name}"
+                    try:
+                        # Align timestamp to current epoch for sliding window analysis
+                        flow["timestamp"] = time.time()
+                        flow["source"] = "live"
 
-                    # Update live throughput counters with actual packet bytes and counts
-                    record_flow_telemetry(flow)
+                        # Update live throughput counters with actual packet bytes and counts
+                        record_flow_telemetry(flow)
 
-                    # Execute full multi-engine detection pipeline
-                    processing_started = time.perf_counter()
-                    alerts = pipeline.process_flow_event(flow)
-                    processing_latency_ms = (time.perf_counter() - processing_started) * 1000
-                    throughput_state["last_processing_latency_ms"] = round(processing_latency_ms, 3)
+                        # Execute full multi-engine detection pipeline
+                        processing_started = time.perf_counter()
+                        alerts = pipeline.process_flow_event(flow)
+                        processing_latency_ms = (time.perf_counter() - processing_started) * 1000
+                        throughput_state["last_processing_latency_ms"] = round(processing_latency_ms, 3)
 
-                    # Persist alerts and broadcast live to SOC dashboard
-                    for alert in alerts:
-                        alert = alert.model_copy(update={
-                            "processing_latency_ms": round(processing_latency_ms, 3),
-                        })
-                        alert_store.insert_alert(alert)
-                        if not alert.suppressed:
-                            await ws_manager.broadcast(alert)
-                        throughput_state["last_delivery_latency_ms"] = round(
-                            max(0.0, time.time() - alert.timestamp.timestamp()) * 1000, 3
-                        )
+                        # Persist alerts and broadcast live to SOC dashboard
+                        for alert in alerts:
+                            alert = alert.model_copy(update={
+                                "source": "live",
+                                "processing_latency_ms": round(processing_latency_ms, 3),
+                            })
+                            alert_store.insert_alert(alert)
+                            if not alert.suppressed:
+                                await ws_manager.broadcast(alert)
+                            throughput_state["last_delivery_latency_ms"] = round(
+                                max(0.0, time.time() - alert.timestamp.timestamp()) * 1000, 3
+                            )
 
-                    # Paced packet replay (default 12 flows/sec)
-                    flow_rate = max(float(os.getenv("PCAP_STREAM_RATE", "12")), 1.0)
-                    await asyncio.sleep(1.0 / flow_rate)
+                        # Paced packet replay (default 8 flows/sec for stable continuous stream)
+                        flow_rate = max(float(os.getenv("PCAP_STREAM_RATE", "8")), 1.0)
+                        await asyncio.sleep(1.0 / flow_rate)
+                    except Exception as flow_exc:
+                        logger.warning("Error processing flow in PCAP worker: %s", flow_exc)
 
     except asyncio.CancelledError:
         logger.info("ThreatLens Real PCAP Streaming Worker stopped.")
