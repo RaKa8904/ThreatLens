@@ -20,6 +20,15 @@ if str(ROOT_DIR) not in sys.path:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("threatlens-space")
 
+# Top-level ZeroGPU compatibility decorator for Hugging Face ZeroGPU runtime
+try:
+    import spaces
+    @spaces.GPU
+    def _hf_zerogpu_target():
+        return True
+except Exception:
+    pass
+
 # 1. Start Redis Server Daemon in Background
 try:
     logger.info("Starting background Redis server...")
@@ -45,29 +54,51 @@ def ensure_kafka_broker():
     except Exception:
         s.close()
 
-    try:
-        logger.info("Attempting to start Redpanda Kafka broker service...")
-        subprocess.Popen(
-            ["redpanda", "start", "--smp", "1", "--memory", "512M", "--reserve-memory", "0M", "--overprovisioned", "--node-id", "0", "--check=false", "--kafka-addr", "PLAINTEXT://127.0.0.1:9092"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        time.sleep(2)
-        return True
-    except Exception as exc:
-        logger.warning("System Redpanda launcher omitted (%s).", exc)
-        return False
+    # Check if redpanda binary exists or download static release
+    bin_dir = ROOT_DIR / "bin"
+    redpanda_bin = bin_dir / "redpanda"
+    
+    import shutil
+    sys_redpanda = shutil.which("redpanda")
+    cmd_bin = sys_redpanda or (str(redpanda_bin) if redpanda_bin.exists() else None)
+
+    if not cmd_bin:
+        logger.info("Downloading standalone Redpanda Kafka broker binary for Linux...")
+        try:
+            bin_dir.mkdir(parents=True, exist_ok=True)
+            import urllib.request
+            import tarfile
+            url = "https://github.com/redpanda-data/redpanda/releases/download/v23.3.5/redpanda-23.3.5-linux-amd64.tar.gz"
+            tar_path = bin_dir / "redpanda.tar.gz"
+            urllib.request.urlretrieve(url, tar_path)
+            with tarfile.open(tar_path, "r:gz") as tar:
+                tar.extractall(path=bin_dir)
+            if tar_path.exists():
+                tar_path.unlink()
+            for p in bin_dir.rglob("redpanda"):
+                if p.is_file():
+                    os.chmod(p, 0o755)
+                    cmd_bin = str(p)
+                    break
+        except Exception as exc:
+            logger.warning("Redpanda binary download omitted (%s).", exc)
+
+    if cmd_bin:
+        try:
+            logger.info("Launching Redpanda Kafka broker service (%s)...", cmd_bin)
+            subprocess.Popen(
+                [cmd_bin, "start", "--smp", "1", "--memory", "512M", "--reserve-memory", "0M", "--overprovisioned", "--node-id", "0", "--check=false", "--kafka-addr", "PLAINTEXT://127.0.0.1:9092"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            time.sleep(3)
+            return True
+        except Exception as exc:
+            logger.warning("Redpanda launcher failed (%s).", exc)
+
+    return False
 
 ensure_kafka_broker()
-
-# 3. Satisfy Hugging Face ZeroGPU decorator requirement if running on ZeroGPU hardware
-try:
-    import spaces
-    @spaces.GPU
-    def _hf_zerogpu_handler():
-        return True
-except Exception:
-    pass
 
 # 4. Strictly enforce local project workflow: INGEST_SOURCE = kafka
 os.environ["INGEST_SOURCE"] = "kafka"
