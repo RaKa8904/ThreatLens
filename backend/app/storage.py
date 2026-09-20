@@ -60,6 +60,7 @@ class ClickHouseAlertStore:
         self._status_overrides: Dict[str, AlertStatusEnum] = {}
         self._lock = threading.Lock()
         self._ch_lock = threading.Lock()
+        self._last_reconnect_attempt = 0.0
 
         if auto_connect:
             self.connect()
@@ -68,6 +69,8 @@ class ClickHouseAlertStore:
 
     def connect(self) -> bool:
         """Attempts to establish connection with ClickHouse and initialize tables."""
+        import time
+        self._last_reconnect_attempt = time.time()
         try:
             import clickhouse_connect
 
@@ -133,7 +136,8 @@ class ClickHouseAlertStore:
         with self._lock:
             self._memory_ring.appendleft(alert)
 
-        if not self.is_connected and self._allow_reconnect:
+        import time
+        if not self.is_connected and self._allow_reconnect and (time.time() - self._last_reconnect_attempt > 60):
             self.connect()
 
         if not self.is_connected or self.client is None:
@@ -186,7 +190,8 @@ class ClickHouseAlertStore:
         """
         Retrieves recent alerts from ClickHouse or falls back to in-memory ring buffer.
         """
-        if not self.is_connected and self._allow_reconnect:
+        import time
+        if not self.is_connected and self._allow_reconnect and (time.time() - self._last_reconnect_attempt > 60):
             self.connect()
 
         if self.is_connected and self.client is not None:

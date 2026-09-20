@@ -38,7 +38,13 @@ export function useThreatSocket(url?: string) {
     const protocol = loc.protocol === "https:" ? "wss:" : "ws:";
     const token = sessionStorage.getItem("threatlens_token") || localStorage.getItem("threatlens_token");
     const tokenQuery = token ? `?token=${encodeURIComponent(token)}` : "";
-    return `${protocol}//${loc.hostname}:8000/ws/threats${tokenQuery}`;
+    
+    // In local dev environment (localhost / 127.0.0.1), use port 8000:
+    if (loc.hostname === "localhost" || loc.hostname === "127.0.0.1") {
+      return `${protocol}//${loc.hostname}:8000/ws/threats${tokenQuery}`;
+    }
+    // In production cloud (Hugging Face or custom domain), use same-origin host (no port 8000):
+    return `${protocol}//${loc.host}/ws/threats${tokenQuery}`;
   })();
 
   const targetUrl = url || defaultUrl;
