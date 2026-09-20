@@ -136,10 +136,6 @@ class ClickHouseAlertStore:
         with self._lock:
             self._memory_ring.appendleft(alert)
 
-        import time
-        if not self.is_connected and self._allow_reconnect and (time.time() - self._last_reconnect_attempt > 60):
-            self.connect()
-
         if not self.is_connected or self.client is None:
             return True
 

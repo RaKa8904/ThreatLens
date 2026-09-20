@@ -124,7 +124,8 @@ def run_replay(pcap_path: str) -> None:
             import shutil
             is_testing = os.getenv("TESTING", "").lower() == "true" or "PYTEST_CURRENT_TEST" in os.environ
             zeek_success = False
-            if shutil.which("docker") and not is_testing:
+            has_docker_sock = os.path.exists("/var/run/docker.sock") if os.name != "nt" else True
+            if shutil.which("docker") and has_docker_sock and not is_testing:
                 try:
                     subprocess.run(["docker", "rm", "-f", "threatlens-zeek-replay"], capture_output=True, timeout=5)
                     subprocess.run(

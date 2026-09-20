@@ -124,10 +124,11 @@ def execute_pcap_replay_job(
             # Execute Zeek replay either via container or direct command
             zeek_success = False
 
-            # Strategy 1: Attempt Docker execution if docker CLI & daemon are responsive and not running under unit tests
+            # Strategy 1: Attempt Docker execution only if docker CLI & live daemon socket exist and not under test
             import shutil
             is_testing = os.getenv("TESTING", "").lower() == "true" or "PYTEST_CURRENT_TEST" in os.environ
-            if shutil.which("docker") and not is_testing:
+            has_docker_sock = os.path.exists("/var/run/docker.sock") if os.name != "nt" else True
+            if shutil.which("docker") and has_docker_sock and not is_testing:
                 try:
                     # Clean up any lingering container with the same name before launch
                     subprocess.run(["docker", "rm", "-f", "threatlens-zeek-replay"], capture_output=True, timeout=5)
