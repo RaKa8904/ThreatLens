@@ -88,6 +88,7 @@ class KafkaIngestConsumer:
                     enable_auto_commit=True,
                     group_id="threatlens-pipeline-group",
                     consumer_timeout_ms=1000,
+                    request_timeout_ms=2000,
                 )
                 self.is_kafka_connected = True
                 logger.info("KafkaIngestConsumer connected to %s on topics %s", servers, self.topics)
