@@ -10,8 +10,6 @@ __pycache__
 *.pyd
 .DS_Store
 *.log
-pcaps/*.pcap
-pcaps/*.pcapng
 logs/*
 data/*
 !data/.gitkeep

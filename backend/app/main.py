@@ -113,12 +113,17 @@ def event_timestamp_seconds(payload: Dict[str, Any]) -> Optional[float]:
     return None
 
 
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+PCAP_DIR = REPO_ROOT / "pcaps"
+
+
 def run_replay(pcap_path: str) -> None:
     replay_state.update({"status": "running", "path": pcap_path, "processed_alerts": 0, "error": None})
     try:
         with tempfile.TemporaryDirectory(prefix="threatlens-replay-") as log_dir:
             import shutil
             is_testing = os.getenv("TESTING", "").lower() == "true" or "PYTEST_CURRENT_TEST" in os.environ
+            zeek_success = False
             if shutil.which("docker") and not is_testing:
                 try:
                     subprocess.run(["docker", "rm", "-f", "threatlens-zeek-replay"], capture_output=True, timeout=5)
@@ -129,8 +134,17 @@ def run_replay(pcap_path: str) -> None:
                         text=True,
                         timeout=30,
                     )
+                    zeek_success = True
                 except Exception as exc:
                     logger.debug("Legacy replay docker execution omitted: %s", exc)
+
+            if not zeek_success:
+                try:
+                    from ingest.pcap_engine import PcapZeekEngine
+                    PcapZeekEngine(str(pcap_path)).export_zeek_logs(log_dir)
+                except Exception as exc:
+                    logger.error("Native PCAP DPI engine failed for %s: %s", pcap_path, exc)
+
             replay_pipeline = DetectionPipeline(store=SlidingWindowStore(use_redis=False), aggregator=AlertAggregator())
             shipper = ZeekLogShipper(log_dir=log_dir, event_queue=queue.Queue())
             for log_name in ["dns", "ssl", "conn"]:
@@ -144,46 +158,65 @@ def run_replay(pcap_path: str) -> None:
         replay_state.update({"status": "failed", "error": str(exc)})
 
 
-async def background_stream_worker(interval_seconds: float = 1.5):
+async def real_pcap_stream_worker():
     """
-    Continuous background task generating synthetic enterprise telemetry,
-    feeding the detection pipeline, indexing to ClickHouse, and broadcasting alerts.
+    Continuous worker reading real PCAP attack captures from the pcaps/ directory,
+    decoding real packets into Zeek flow telemetry, feeding the detection pipeline,
+    updating metrics counters, indexing alerts, and broadcasting in real time via WebSocket.
     """
-    logger.info("ThreatLens background telemetry streaming worker started.")
+    logger.info("ThreatLens Real PCAP Packet Streaming Worker started from %s", PCAP_DIR)
+    from ingest.pcap_engine import PcapZeekEngine
+
     try:
         while True:
-            # Keep high-volume background traffic separate from sparse threats.
-            event = flow_generator.generate_event(
-                anomaly_ratio=float(os.getenv("SIMULATION_THREAT_RATIO", "0.005"))
-            )
+            pcap_files = sorted(list(PCAP_DIR.glob("*.pcap")) + list(PCAP_DIR.glob("*.pcapng")))
+            if not pcap_files:
+                logger.warning("No PCAP files discovered in %s. Waiting for capture files...", PCAP_DIR)
+                await asyncio.sleep(3.0)
+                continue
 
-            # Update metrics counters
-            record_flow_telemetry(event)
+            for pcap_path in pcap_files:
+                try:
+                    engine = PcapZeekEngine(str(pcap_path))
+                    flows = engine.extract_flows()
+                except Exception as pcap_err:
+                    logger.error("Failed to parse PCAP %s: %s", pcap_path.name, pcap_err)
+                    continue
 
-            # Run detection pipeline
-            processing_started = time.perf_counter()
-            alerts = pipeline.process_flow_event(event)
-            processing_latency_ms = (time.perf_counter() - processing_started) * 1000
-            throughput_state["last_processing_latency_ms"] = round(processing_latency_ms, 3)
+                for flow in flows:
+                    # Align timestamp to current epoch for sliding window analysis
+                    flow["timestamp"] = time.time()
+                    flow["source"] = f"pcap:{pcap_path.name}"
 
-            # Ingest to ClickHouse and broadcast live to WebSocket clients
-            for alert in alerts:
-                event_ts = event_timestamp_seconds(event)
-                alert = alert.model_copy(update={
-                    "ingest_latency_ms": round(max(0.0, time.time() - event_ts) * 1000, 3) if event_ts else None,
-                    "processing_latency_ms": round(processing_latency_ms, 3),
-                })
-                alert_store.insert_alert(alert)
-                if not alert.suppressed:
-                    await ws_manager.broadcast(alert)
-                throughput_state["last_delivery_latency_ms"] = round(max(0.0, time.time() - alert.timestamp.timestamp()) * 1000, 3)
+                    # Update live throughput counters with actual packet bytes and counts
+                    record_flow_telemetry(flow)
 
-            flow_rate = max(float(os.getenv("SIMULATION_FLOWS_PER_SECOND", "10")), 0.1)
-            await asyncio.sleep(1.0 / flow_rate)
+                    # Execute full multi-engine detection pipeline
+                    processing_started = time.perf_counter()
+                    alerts = pipeline.process_flow_event(flow)
+                    processing_latency_ms = (time.perf_counter() - processing_started) * 1000
+                    throughput_state["last_processing_latency_ms"] = round(processing_latency_ms, 3)
+
+                    # Persist alerts and broadcast live to SOC dashboard
+                    for alert in alerts:
+                        alert = alert.model_copy(update={
+                            "processing_latency_ms": round(processing_latency_ms, 3),
+                        })
+                        alert_store.insert_alert(alert)
+                        if not alert.suppressed:
+                            await ws_manager.broadcast(alert)
+                        throughput_state["last_delivery_latency_ms"] = round(
+                            max(0.0, time.time() - alert.timestamp.timestamp()) * 1000, 3
+                        )
+
+                    # Paced packet replay (default 12 flows/sec)
+                    flow_rate = max(float(os.getenv("PCAP_STREAM_RATE", "12")), 1.0)
+                    await asyncio.sleep(1.0 / flow_rate)
+
     except asyncio.CancelledError:
-        logger.info("ThreatLens background telemetry streaming worker stopped.")
+        logger.info("ThreatLens Real PCAP Streaming Worker stopped.")
     except Exception as exc:
-        logger.error("Error in telemetry streaming worker: %s", exc)
+        logger.error("Error in Real PCAP Streaming Worker: %s", exc)
 
 
 @asynccontextmanager
@@ -209,15 +242,13 @@ async def lifespan(app: FastAPI):
             if consumer.is_kafka_connected:
                 worker_task = asyncio.create_task(consumer.run_consumer_loop(stop_event=stop_event))
             else:
-                logger.info("Kafka broker %s offline. Starting live background network telemetry and attack stream worker.", kafka_servers)
-                worker_task = asyncio.create_task(background_stream_worker(interval_seconds=0.8))
+                logger.info("Kafka broker %s offline. Starting Real PCAP streaming worker from %s.", kafka_servers, PCAP_DIR)
+                worker_task = asyncio.create_task(real_pcap_stream_worker())
         except Exception as exc:
-            logger.warning("Kafka Consumer init fallback (%s). Using background telemetry stream worker.", exc)
-            worker_task = asyncio.create_task(background_stream_worker(interval_seconds=0.8))
+            logger.warning("Kafka Consumer init fallback (%s). Starting Real PCAP streaming worker.", exc)
+            worker_task = asyncio.create_task(real_pcap_stream_worker())
     else:
-        enable_bg = os.getenv("ENABLE_BACKGROUND_GENERATOR", "true").lower() in ("true", "1", "yes")
-        if enable_bg:
-            worker_task = asyncio.create_task(background_stream_worker(interval_seconds=1.2))
+        worker_task = asyncio.create_task(real_pcap_stream_worker())
 
     yield
 

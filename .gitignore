@@ -54,6 +54,8 @@ out/
 # Network captures & runtime logs
 *.pcap
 *.pcapng
+!pcaps/*.pcap
+!pcaps/*.pcapng
 *.cap
 *.log
 logs/
