@@ -206,10 +206,14 @@ async def lifespan(app: FastAPI):
                 kafka_bootstrap_servers=kafka_servers,
                 on_message=lambda topic, data: record_flow_telemetry(data),
             )
-            worker_task = asyncio.create_task(consumer.run_consumer_loop(stop_event=stop_event))
+            if consumer.is_kafka_connected:
+                worker_task = asyncio.create_task(consumer.run_consumer_loop(stop_event=stop_event))
+            else:
+                logger.info("Kafka broker %s offline. Starting live background network telemetry and attack stream worker.", kafka_servers)
+                worker_task = asyncio.create_task(background_stream_worker(interval_seconds=0.8))
         except Exception as exc:
             logger.warning("Kafka Consumer init fallback (%s). Using background telemetry stream worker.", exc)
-            worker_task = asyncio.create_task(background_stream_worker(interval_seconds=1.2))
+            worker_task = asyncio.create_task(background_stream_worker(interval_seconds=0.8))
     else:
         enable_bg = os.getenv("ENABLE_BACKGROUND_GENERATOR", "true").lower() in ("true", "1", "yes")
         if enable_bg:
