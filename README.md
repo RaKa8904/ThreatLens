@@ -1,3 +1,13 @@
+---
+title: ThreatLens
+emoji: 🛡️
+colorFrom: green
+colorTo: black
+sdk: gradio
+app_file: app.py
+pinned: false
+---
+
 # ThreatLens: Real-Time Passive Network Threat Detection & Live Forensic Intelligence
 
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB.svg?logo=python&logoColor=white)](https://www.python.org/)
