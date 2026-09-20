@@ -165,7 +165,32 @@ def generate_all_pcaps():
         w_dns.add_packet(t_dns, build_ethernet_frame(mac_host, mac_gateway, 0x0800, ip_q))
     w_dns.write()
 
-    print("[ThreatLens] Successfully generated all PCAP samples in pcaps/")
+    # 5. Encrypted Malware (JA3 Malicious TLS) PCAP
+    w_malware = PcapWriter("pcaps/encrypted_malware.pcap")
+    malware_src = "10.24.15.80"
+    malware_c2 = "185.220.101.5"
+    for idx in range(4):
+        t_m = base_t + (idx * 3.0)
+        # Construct realistic TLS ClientHello frame with malicious SNI
+        tls_payload = b"\x16\x03\x01\x00\x64\x01\x00\x00\x60\x03\x03" + os.urandom(32) + b"\x00\x00\x04\xc0\x2f\xc0\x30\x01\x00\x00\x33\x00\x00\x00\x1a\x00\x18\x00\x00\x15cobalt-c2-node.darknet"
+        tcp_tls = build_tcp_packet(49152 + idx, 443, seq=20000 + idx, ack=1000, flags=0x18, payload=tls_payload)
+        ip_tls = build_ipv4_packet(malware_src, malware_c2, 6, tcp_tls, 900 + idx)
+        w_malware.add_packet(t_m, build_ethernet_frame(mac_host, mac_gateway, 0x0800, ip_tls))
+    w_malware.write()
+
+    # 6. Data Exfiltration PCAP
+    w_exfil = PcapWriter("pcaps/data_exfiltration.pcap")
+    exfil_src = "10.24.22.150"
+    exfil_dst = "198.51.100.99"
+    for idx in range(12):
+        t_ex = base_t + (idx * 0.05)
+        exfil_data = b"CONFIDENTIAL_FINANCIAL_DATABASE_EXPORT_CHUNK_" + os.urandom(1200)
+        tcp_ex = build_tcp_packet(55120, 8443, seq=30000 + (idx * 1250), ack=2000, flags=0x18, payload=exfil_data)
+        ip_ex = build_ipv4_packet(exfil_src, exfil_dst, 6, tcp_ex, 1100 + idx)
+        w_exfil.add_packet(t_ex, build_ethernet_frame(mac_host, mac_gateway, 0x0800, ip_ex))
+    w_exfil.write()
+
+    print("[ThreatLens] Successfully generated all 6 specialized PCAP samples in pcaps/")
 
 
 if __name__ == "__main__":

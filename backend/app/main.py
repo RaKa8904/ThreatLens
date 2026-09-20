@@ -218,25 +218,91 @@ async def streamlined_pcap_network_worker():
     """
     Streamlined Enterprise SOC Telemetry Worker:
     - Maintains a steady, organic baseline of healthy enterprise traffic (~3-4 flows/sec, ~35-55 PPS).
-    - Periodically (every ~12-15 seconds / 40 benign flows) injects a controlled real PCAP attack scenario.
-    - Creates authentic, readable SOC incident peaks without spamming storage or maxing out buffers.
+    - Periodically (every ~12-15 seconds / 40 benign flows) injects a controlled attack scenario
+      cycling through ALL 6 ThreatLens attack vectors:
+        1. Volumetric & Protocol DDoS
+        2. Botnet C2 Beaconing
+        3. DGA & DNS Tunneling
+        4. Encrypted Malware
+        5. Reconnaissance Scan
+        6. Data Exfiltration
+    - Creates authentic, balanced SOC incident peaks without spamming storage or maxing out buffers.
     """
-    logger.info("ThreatLens Streamlined PCAP Network Worker started from %s", PCAP_DIR)
-    from ingest.pcap_engine import PcapZeekEngine
+    logger.info("ThreatLens Streamlined Network Worker started across all 6 threat classes.")
 
-    # Pre-parse real PCAP attacks into memory for clean, spaced injection
-    pcap_attacks = []
-    pcap_files = sorted(list(PCAP_DIR.glob("*.pcap")) + list(PCAP_DIR.glob("*.pcapng")))
-    for p in pcap_files:
-        try:
-            engine = PcapZeekEngine(str(p))
-            flows = engine.extract_flows()
-            if flows:
-                pcap_attacks.append((p.name, flows))
-        except Exception as e:
-            logger.warning("Could not pre-load PCAP %s: %s", p.name, e)
+    def get_attack_wave(vector_idx: int) -> Tuple[str, List[Dict[str, Any]]]:
+        idx = vector_idx % 6
+        now = time.time()
 
-    pcap_idx = 0
+        if idx == 0:
+            name = "Volumetric & Protocol DDoS"
+            target_ip = "10.24.8.10"
+            flows = [
+                flow_generator.generate_distributed_ddos(
+                    timestamp=now + i * 0.01,
+                    source_ip=f"203.0.113.{(i % 20) + 1}",
+                    target_ip=target_ip,
+                )
+                for i in range(5)
+            ]
+            return name, flows
+
+        elif idx == 1:
+            name = "Botnet C2 Beaconing"
+            bot_ip = f"192.168.1.{100 + (vector_idx % 20)}"
+            c2_ip = "198.51.100.77"
+            flows = [
+                flow_generator.generate_botnet_c2(
+                    timestamp=now - (4 - i) * 15.0,
+                    interval_sec=15.0,
+                    bot_ip=bot_ip,
+                    c2_ip=c2_ip,
+                )
+                for i in range(5)
+            ]
+            return name, flows
+
+        elif idx == 2:
+            name = "DGA & DNS Tunneling"
+            flows = [flow_generator.generate_dga_dns_tunnel(timestamp=now + i * 0.02) for i in range(3)]
+            return name, flows
+
+        elif idx == 3:
+            name = "Encrypted Malware"
+            flows = [flow_generator.generate_encrypted_malware(timestamp=now + i * 0.02) for i in range(3)]
+            return name, flows
+
+        elif idx == 4:
+            name = "Reconnaissance Scan"
+            src_ip = f"10.42.{random.randint(1, 200)}.{random.randint(1, 250)}"
+            dst_ip = "10.24.12.20"
+            ports = [21, 22, 23, 25, 80, 110, 443, 3306, 8080]
+            flows = [
+                {
+                    "timestamp": now + i * 0.01,
+                    "flow_id": f"{src_ip}:{50000 + i}->{dst_ip}:{port}",
+                    "src_ip": src_ip,
+                    "src_port": 50000 + i,
+                    "dst_ip": dst_ip,
+                    "dst_port": port,
+                    "protocol": "TCP",
+                    "flags": ["SYN"],
+                    "bytes_out": 44,
+                    "bytes_in": 0,
+                    "packets_out": 1,
+                    "packets_in": 0,
+                    "source": "live",
+                }
+                for i, port in enumerate(ports)
+            ]
+            return name, flows
+
+        else:
+            name = "Data Exfiltration"
+            flows = [flow_generator.generate_data_exfiltration(timestamp=now + i * 0.02) for i in range(3)]
+            return name, flows
+
+    attack_wave_idx = 0
     benign_counter = 0
 
     try:
@@ -248,20 +314,19 @@ async def streamlined_pcap_network_worker():
 
             benign_counter += 1
 
-            # 2. Every 40 benign flows (~12-14 seconds), inject a real PCAP attack scenario
-            if pcap_attacks and benign_counter >= 40:
+            # 2. Every 40 benign flows (~12-14 seconds), inject next attack vector in 6-class rotation
+            if benign_counter >= 40:
                 benign_counter = 0
-                attack_name, attack_flows = pcap_attacks[pcap_idx % len(pcap_attacks)]
-                pcap_idx += 1
-                logger.info("Injecting streamlined PCAP attack scenario: %s (%d flows)", attack_name, len(attack_flows))
+                attack_name, attack_flows = get_attack_wave(attack_wave_idx)
+                attack_wave_idx += 1
+                logger.info("Injecting attack vector [%d/6]: %s (%d flows)", (attack_wave_idx % 6) or 6, attack_name, len(attack_flows))
 
                 # Inject a controlled burst of real attack flows (spaced at 0.08s)
-                # We limit the burst to max 6 flows per wave to ensure clean, distinct incident generation
-                flows_to_play = attack_flows[:6]
-                for flow in flows_to_play:
+                for flow in attack_flows:
                     try:
                         flow_copy = dict(flow)
-                        flow_copy["timestamp"] = time.time()
+                        if "timestamp" not in flow_copy or not flow_copy["timestamp"]:
+                            flow_copy["timestamp"] = time.time()
                         flow_copy["source"] = "live"
 
                         record_flow_telemetry(flow_copy)
