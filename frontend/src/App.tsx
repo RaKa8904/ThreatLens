@@ -16,7 +16,7 @@ type SeverityFilter = "critical" | "high" | null;
 type AlertViewMode = "live" | "archive";
 
 export function App() {
-  const { alerts, status, totalReceived, sessionReceived, formattedArchiveTotal, updateAlertStatus } = useThreatSocket();
+  const { alerts, status, totalReceived, sessionReceived, formattedArchiveTotal, updateAlertStatus, clearAllAlerts } = useThreatSocket();
   const [selectedAlert, setSelectedAlert] = useState<ThreatAlertSchema | null>(null);
   const [alertViewMode, setAlertViewMode] = useState<AlertViewMode>("live");
   const [archiveAlerts, setArchiveAlerts] = useState<ThreatAlertSchema[]>([]);
@@ -146,6 +146,7 @@ export function App() {
         onLogout={handleLogout}
         onOpenConfig={() => setConfigOpen(true)}
         onOpenReplay={() => setReplayOpen(true)}
+        onClearDB={clearAllAlerts}
       />
 
       {/* Main SOC Dashboard Viewport */}

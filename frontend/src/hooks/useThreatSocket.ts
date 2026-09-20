@@ -17,14 +17,7 @@ const MAX_BACKOFF_MS = 15000;
 export function useThreatSocket(url?: string) {
   const [alerts, setAlerts] = useState<ThreatAlertSchema[]>([]);
   const [status, setStatus] = useState<ConnectionStatus>("CONNECTING");
-  const [sessionReceived, setSessionReceived] = useState<number>(() => {
-    try {
-      const stored = sessionStorage.getItem("threatlens_session_received");
-      return stored ? parseInt(stored, 10) : 0;
-    } catch {
-      return 0;
-    }
-  });
+  const [sessionReceived, setSessionReceived] = useState<number>(0);
   const [archiveTotal, setArchiveTotal] = useState<number>(0);
 
   const socketRef = useRef<WebSocket | null>(null);
@@ -71,11 +64,7 @@ export function useThreatSocket(url?: string) {
           const data = JSON.parse(event.data);
           if (data.type === "heartbeat" || data.type === "pong") return;
 
-          setSessionReceived((prev) => {
-            const next = prev + 1;
-            try { sessionStorage.setItem("threatlens_session_received", next.toString()); } catch {}
-            return next;
-          });
+          setSessionReceived((prev) => prev + 1);
           setArchiveTotal((prev) => prev + 1);
 
           setAlerts((prevAlerts) => {
@@ -138,6 +127,7 @@ export function useThreatSocket(url?: string) {
           const metrics = await metricsRes.json();
           if (typeof metrics.total_alerts === "number") {
             setArchiveTotal(metrics.total_alerts);
+            setSessionReceived(metrics.total_alerts);
           }
         }
       } catch {
@@ -166,6 +156,19 @@ export function useThreatSocket(url?: string) {
     setAlerts([]);
   }, []);
 
+  const clearAllAlerts = useCallback(async () => {
+    try {
+      await fetch("/api/alerts/clear", { method: "POST" });
+    } catch {}
+    setAlerts([]);
+    setSessionReceived(0);
+    setArchiveTotal(0);
+    try {
+      sessionStorage.removeItem("threatlens_session_received");
+      sessionStorage.removeItem("threatlens_throughput_history");
+    } catch {}
+  }, []);
+
   const updateAlertStatus = useCallback((flowId: string, status: AlertStatusEnum) => {
     setAlerts((current) => current.map((alert) => alert.flow_id === flowId ? { ...alert, status } : alert));
   }, []);
@@ -178,8 +181,9 @@ export function useThreatSocket(url?: string) {
     alerts,
     status,
     clearAlerts,
+    clearAllAlerts,
     updateAlertStatus,
-    totalReceived: sessionReceived || archiveTotal,
+    totalReceived: sessionReceived,
     sessionReceived,
     archiveTotal,
     formattedArchiveTotal,

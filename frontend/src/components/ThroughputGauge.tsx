@@ -53,7 +53,16 @@ export function ThroughputGauge({
   const [data, setData] = useState<ThroughputPoint[]>(() => {
     try {
       const stored = sessionStorage.getItem("threatlens_throughput_history");
-      return stored ? JSON.parse(stored) : [];
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const latest = parsed[parsed.length - 1];
+          if (latest && Date.now() - latest.timestamp < 5 * 60 * 1000) {
+            return parsed;
+          }
+        }
+      }
+      return [];
     } catch {
       return [];
     }
@@ -173,7 +182,7 @@ export function ThroughputGauge({
           </div>
 
           <div className="hidden sm:flex items-center space-x-1 text-zinc-300">
-            <span className="text-rose-400 font-semibold">RECEIVED TOTAL:</span>
+            <span className="text-rose-400 font-semibold">TOTAL ALERTS:</span>
             <span>{totalAlerts}</span>
           </div>
         </div>
@@ -214,7 +223,7 @@ export function ThroughputGauge({
                 fontSize={9}
                 tickLine={false}
                 axisLine={false}
-                domain={["dataMin - 5", "dataMax + 5"]}
+                domain={[0, (dataMax: number) => Math.max(10, Math.ceil(dataMax * 1.25))]}
               />
               <YAxis
                 yAxisId="pps"
@@ -223,7 +232,7 @@ export function ThroughputGauge({
                 fontSize={9}
                 tickLine={false}
                 axisLine={false}
-                domain={["dataMin - 20", "dataMax + 20"]}
+                domain={[0, (dataMax: number) => Math.max(25, Math.ceil(dataMax * 1.25))]}
               />
               <Tooltip
                 contentStyle={{

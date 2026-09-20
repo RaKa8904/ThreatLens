@@ -21,17 +21,19 @@ interface NavbarProps {
   onLogout?: () => void;
   onOpenConfig?: () => void;
   onOpenReplay?: () => void;
+  onClearDB?: () => void;
 }
 
 export function Navbar({
   status,
-  totalAlerts,
+  totalAlerts: _totalAlerts = 0,
   sessionReceived = 0,
   formattedArchiveTotal,
   user,
   onLogout,
   onOpenConfig,
   onOpenReplay,
+  onClearDB,
 }: NavbarProps) {
   const [utcTime, setUtcTime] = useState<string>("");
   const [menuOpen, setMenuOpen] = useState<boolean>(false);
@@ -115,19 +117,17 @@ export function Navbar({
           {getStatusBadge()}
 
           <div
-            title={`ClickHouse Total DB Archive: ${formattedArchiveTotal || totalAlerts} records`}
+            title={`Database Archive: ${formattedArchiveTotal || "0"} records`}
             className="flex items-center space-x-1.5 text-xs text-zinc-400 font-mono bg-zinc-900/80 border border-zinc-800 px-3 py-1 rounded-md cursor-help"
           >
             <Activity01 className="h-3.5 w-3.5 text-emerald-400" />
             <span>LIVE SESSION:</span>
             <span className="text-emerald-300 font-bold tabular-nums">
-              {sessionReceived > 0 ? sessionReceived : totalAlerts}
+              {sessionReceived}
             </span>
-            {formattedArchiveTotal && (
-              <span className="text-[10px] text-zinc-400 border-l border-zinc-700 pl-1.5 ml-1">
-                DB: {formattedArchiveTotal}
-              </span>
-            )}
+            <span className="text-[10px] text-zinc-400 border-l border-zinc-700 pl-1.5 ml-1">
+              DB: {formattedArchiveTotal || "0"}
+            </span>
           </div>
         </div>
 
@@ -191,8 +191,23 @@ export function Navbar({
                     )}
                   </div>
 
-                  {onLogout && (
-                    <div className="pt-1 border-t border-zinc-800/80">
+                  <div className="pt-1 border-t border-zinc-800/80 space-y-1">
+                    {onClearDB && (
+                      <button
+                        onClick={() => {
+                          setMenuOpen(false);
+                          if (window.confirm("Empty the alert database and reset live session telemetry to fresh start?")) {
+                            onClearDB();
+                          }
+                        }}
+                        className="w-full flex items-center space-x-2 px-3 py-2 text-xs text-amber-300 hover:bg-amber-500/10 rounded-md transition-colors text-left font-semibold"
+                      >
+                        <ShieldSecurity className="h-3.5 w-3.5 text-amber-400" />
+                        <span>Empty DB &amp; Reset</span>
+                      </button>
+                    )}
+
+                    {onLogout && (
                       <button
                         onClick={() => {
                           setMenuOpen(false);
@@ -203,8 +218,8 @@ export function Navbar({
                         <LogoutIcon className="h-3.5 w-3.5 text-rose-400" />
                         <span>Sign Out of SOC</span>
                       </button>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
               )}
             </div>

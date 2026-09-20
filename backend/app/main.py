@@ -160,23 +160,39 @@ def run_replay(pcap_path: str) -> None:
 
 
 def generate_benign_enterprise_flow() -> Dict[str, Any]:
-    """Generates standard corporate benign flow to model healthy background network baseline."""
+    """Generates standard corporate benign flow with realistic variance to model healthy background network baseline."""
     import random
     src_ip = f"10.24.{random.randint(1, 15)}.{random.randint(2, 254)}"
     dst_info = random.choice([
-        ("142.250.190.46", 443, "TCP", None),
-        ("140.82.121.4", 443, "TCP", None),
-        ("104.16.132.229", 443, "TCP", None),
-        ("8.8.8.8", 53, "UDP", "google.com"),
-        ("1.1.1.1", 53, "UDP", "cloudflare.com"),
-        ("10.24.1.1", 53, "UDP", "internal.corp"),
+        ("142.250.190.46", 443, "TCP", None),         # Google HTTPS
+        ("140.82.121.4", 443, "TCP", None),           # GitHub HTTPS
+        ("104.16.132.229", 443, "TCP", None),         # Cloudflare CDN
+        ("13.107.42.14", 443, "TCP", None),           # Microsoft Office365
+        ("52.84.18.23", 443, "TCP", None),            # AWS CloudFront
+        ("8.8.8.8", 53, "UDP", "google.com"),         # Google DNS
+        ("1.1.1.1", 53, "UDP", "cloudflare.com"),     # Cloudflare DNS
+        ("10.24.1.1", 53, "UDP", "internal.corp"),    # Internal Domain Controller
+        ("10.24.2.10", 80, "TCP", None),              # Internal Intranet portal
     ])
     dst_ip, dst_port, proto, dns_query = dst_info
     src_port = random.randint(1024, 65535)
-    bytes_out = random.randint(120, 1500)
-    bytes_in = random.randint(300, 12000)
-    packets_out = random.randint(2, 8)
-    packets_in = random.randint(3, 14)
+
+    # Realistic organic packet and byte variance
+    if proto == "UDP":
+        packets_out = random.randint(1, 3)
+        packets_in = random.randint(1, 3)
+        bytes_out = random.randint(60, 240)
+        bytes_in = random.randint(80, 512)
+    elif dst_port == 80:
+        packets_out = random.randint(3, 8)
+        packets_in = random.randint(4, 18)
+        bytes_out = random.randint(200, 1200)
+        bytes_in = random.randint(800, 14000)
+    else:
+        packets_out = random.randint(4, 14)
+        packets_in = random.randint(6, 28)
+        bytes_out = random.randint(400, 3200)
+        bytes_in = random.randint(1200, 32000)
 
     return {
         "timestamp": time.time(),
@@ -201,9 +217,9 @@ def generate_benign_enterprise_flow() -> Dict[str, Any]:
 async def streamlined_pcap_network_worker():
     """
     Streamlined Enterprise SOC Telemetry Worker:
-    - Maintains a steady, realistic baseline of healthy enterprise traffic (~1 flow/sec, smooth PPS).
-    - Periodically (every ~25 seconds) injects a controlled real PCAP attack scenario from pcaps/.
-    - Creates clear, readable SOC incident peaks without spamming storage or maxing out buffers.
+    - Maintains a steady, organic baseline of healthy enterprise traffic (~3-4 flows/sec, ~35-55 PPS).
+    - Periodically (every ~12-15 seconds / 40 benign flows) injects a controlled real PCAP attack scenario.
+    - Creates authentic, readable SOC incident peaks without spamming storage or maxing out buffers.
     """
     logger.info("ThreatLens Streamlined PCAP Network Worker started from %s", PCAP_DIR)
     from ingest.pcap_engine import PcapZeekEngine
@@ -232,16 +248,16 @@ async def streamlined_pcap_network_worker():
 
             benign_counter += 1
 
-            # 2. Every 25 benign flows (~25-30 seconds), inject a real PCAP attack scenario
-            if pcap_attacks and benign_counter >= 25:
+            # 2. Every 40 benign flows (~12-14 seconds), inject a real PCAP attack scenario
+            if pcap_attacks and benign_counter >= 40:
                 benign_counter = 0
                 attack_name, attack_flows = pcap_attacks[pcap_idx % len(pcap_attacks)]
                 pcap_idx += 1
                 logger.info("Injecting streamlined PCAP attack scenario: %s (%d flows)", attack_name, len(attack_flows))
 
-                # Inject a controlled burst of real attack flows (spaced at 0.15s)
-                # We limit the burst to max 8 flows per wave to ensure clean, distinct incident generation
-                flows_to_play = attack_flows[:8]
+                # Inject a controlled burst of real attack flows (spaced at 0.08s)
+                # We limit the burst to max 6 flows per wave to ensure clean, distinct incident generation
+                flows_to_play = attack_flows[:6]
                 for flow in flows_to_play:
                     try:
                         flow_copy = dict(flow)
@@ -267,12 +283,12 @@ async def streamlined_pcap_network_worker():
                                 max(0.0, time.time() - alert.timestamp.timestamp()) * 1000, 3
                             )
 
-                        await asyncio.sleep(0.15)
+                        await asyncio.sleep(0.08)
                     except Exception as flow_err:
                         logger.warning("Error in attack injection flow: %s", flow_err)
 
-            # Smooth baseline flow spacing: 1 second between background flows
-            await asyncio.sleep(1.0)
+            # Responsive, streamlined flow spacing: ~0.30s between background flows (~3.3 flows/sec)
+            await asyncio.sleep(0.30)
 
     except asyncio.CancelledError:
         logger.info("ThreatLens Streamlined Network Worker stopped.")
@@ -286,8 +302,19 @@ async def lifespan(app: FastAPI):
     ingest_source = os.getenv("INGEST_SOURCE", "kafka").lower()
     logger.info("ThreatLens Ingestion Mode: %s", ingest_source)
 
-    # Clean up any stale flooded alerts from previous noisy runs
+    # Clean up any stale flooded alerts and reset counters for a fresh clean start
     alert_store.clear()
+    throughput_state["total_flows"] = 0
+    throughput_state["total_packets"] = 0
+    throughput_state["total_bytes"] = 0
+    throughput_state["start_time"] = time.time()
+    throughput_state["last_ingest_at"] = None
+    if hasattr(pipeline, "aggregator") and hasattr(pipeline.aggregator, "_source_incidents"):
+        with pipeline.aggregator._correlation_lock:
+            pipeline.aggregator._source_incidents.clear()
+    if hasattr(window_store, "_memory_store"):
+        with window_store._lock:
+            window_store._memory_store.clear()
 
     worker_task = None
     stop_event = asyncio.Event()
@@ -457,9 +484,27 @@ def get_historical_alerts(
 
 @app.post("/api/alerts/clear", tags=["Alerts"])
 def clear_alert_buffer():
-    """Resets the live alert buffer and incident tracking state."""
+    """Resets the live alert buffer, throughput telemetry, and incident tracking state."""
     alert_store.clear()
-    return {"status": "success", "message": "Alert buffer cleared."}
+    throughput_state["total_flows"] = 0
+    throughput_state["total_packets"] = 0
+    throughput_state["total_bytes"] = 0
+    throughput_state["start_time"] = time.time()
+    throughput_state["last_ingest_at"] = None
+    throughput_state["last_processing_latency_ms"] = None
+    throughput_state["last_delivery_latency_ms"] = None
+    if hasattr(pipeline, "aggregator") and hasattr(pipeline.aggregator, "_source_incidents"):
+        with pipeline.aggregator._correlation_lock:
+            pipeline.aggregator._source_incidents.clear()
+    if hasattr(window_store, "_memory_store"):
+        with window_store._lock:
+            window_store._memory_store.clear()
+    if getattr(window_store, "is_redis_connected", False) and window_store.redis_client:
+        try:
+            window_store.redis_client.flushdb()
+        except Exception:
+            pass
+    return {"status": "success", "message": "Alert buffer, throughput telemetry, and cache reset."}
 
 
 @app.patch("/api/alerts/{flow_id:path}/status", response_model=ThreatAlertSchema, tags=["Alerts"])
