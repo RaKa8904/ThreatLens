@@ -206,17 +206,37 @@ class ZeekLogShipper:
         else:
             servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS")
         if servers:
+            # Pre-flight socket check to avoid 60-second blocking if broker is absent
+            import socket
+            broker_online = False
             try:
-                from kafka import KafkaProducer  # type: ignore
-                # kafka-python 3.x warns on lambda serializers; encode explicitly instead.
-                self.kafka_producer = KafkaProducer(
-                    bootstrap_servers=servers,
-                    request_timeout_ms=2000,
-                )
-                self.is_kafka_connected = True
-                logger.info("ZeekLogShipper connected to Kafka at %s", servers)
-            except Exception as exc:
-                logger.warning("Kafka unavailable (%s). Operating in-memory shipper mode.", exc)
+                host_port = servers.split(",")[0].strip().split(":")
+                host = host_port[0]
+                port = int(host_port[1]) if len(host_port) > 1 else 9092
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(0.3)
+                res = sock.connect_ex((host, port))
+                sock.close()
+                broker_online = (res == 0)
+            except Exception:
+                broker_online = False
+
+            if broker_online:
+                try:
+                    from kafka import KafkaProducer  # type: ignore
+                    self.kafka_producer = KafkaProducer(
+                        bootstrap_servers=servers,
+                        request_timeout_ms=1000,
+                        max_block_ms=1000,
+                    )
+                    self.is_kafka_connected = True
+                    logger.info("ZeekLogShipper connected to Kafka at %s", servers)
+                except Exception as exc:
+                    logger.warning("Kafka unavailable (%s). Operating in-memory shipper mode.", exc)
+                    self.kafka_producer = None
+                    self.is_kafka_connected = False
+            else:
+                logger.info("Kafka broker %s is offline (pre-flight check). Operating in-memory shipper mode.", servers)
                 self.kafka_producer = None
                 self.is_kafka_connected = False
 
