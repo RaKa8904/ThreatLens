@@ -78,22 +78,36 @@ class KafkaIngestConsumer:
         else:
             servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS")
         if servers:
+            import socket
+            sock_open = False
             try:
-                ensure_kafka_topics(servers, self.topics)
-                from kafka import KafkaConsumer  # type: ignore
-                self.kafka_consumer = KafkaConsumer(
-                    *self.topics,
-                    bootstrap_servers=servers,
-                    auto_offset_reset="earliest",
-                    enable_auto_commit=True,
-                    group_id="threatlens-pipeline-group",
-                    consumer_timeout_ms=1000,
-                    request_timeout_ms=2000,
-                )
-                self.is_kafka_connected = True
-                logger.info("KafkaIngestConsumer connected to %s on topics %s", servers, self.topics)
-            except Exception as exc:
-                logger.warning("Kafka consumer unavailable (%s). Operating in-memory mode.", exc)
+                host, port_str = servers.split(":")
+                with socket.create_connection((host, int(port_str)), timeout=0.3):
+                    sock_open = True
+            except Exception:
+                sock_open = False
+
+            if sock_open:
+                try:
+                    ensure_kafka_topics(servers, self.topics)
+                    from kafka import KafkaConsumer  # type: ignore
+                    self.kafka_consumer = KafkaConsumer(
+                        *self.topics,
+                        bootstrap_servers=servers,
+                        auto_offset_reset="earliest",
+                        enable_auto_commit=True,
+                        group_id="threatlens-pipeline-group",
+                        consumer_timeout_ms=1000,
+                        request_timeout_ms=1500,
+                    )
+                    self.is_kafka_connected = True
+                    logger.info("KafkaIngestConsumer connected to %s on topics %s", servers, self.topics)
+                except Exception as exc:
+                    logger.warning("Kafka consumer unavailable (%s). Operating in-memory mode.", exc)
+                    self.kafka_consumer = None
+                    self.is_kafka_connected = False
+            else:
+                logger.info("Kafka broker %s unreachable at startup. Operating in resilient in-memory mode.", servers)
                 self.kafka_consumer = None
                 self.is_kafka_connected = False
 

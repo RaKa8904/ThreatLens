@@ -234,30 +234,32 @@ app = FastAPI(
 )
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    """Enforces strict enterprise HTTP security headers against XSS, Clickjacking, and MIME sniffing."""
+    """Enforces strict enterprise HTTP security headers while allowing Hugging Face iframe embedding."""
     async def dispatch(self, request: Request, call_next):
         response: Response = await call_next(request)
-        response.headers["X-Frame-Options"] = "DENY"
+        # Allow iframe rendering inside Hugging Face Spaces (replaces X-Frame-Options: DENY)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-        response.headers["Content-Security-Policy"] = "default-src 'self'; connect-src 'self' ws: wss: http: https:;"
+        response.headers["Content-Security-Policy"] = "frame-ancestors 'self' https://huggingface.co https://*.huggingface.co https://*.hf.space; connect-src 'self' ws: wss: http: https:;"
         return response
 
 
 app.add_middleware(SecurityHeadersMiddleware)
 
-# Enable Hardened CORS for local dev frontends
-cors_origins_env = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000")
-origins = [o.strip() for o in cors_origins_env.split(",") if o.strip()]
+# Enable Hardened CORS for local dev & Hugging Face frontends
+cors_origins_env = os.getenv("CORS_ORIGINS", "*")
+if cors_origins_env == "*":
+    origins = ["*"]
+else:
+    origins = [o.strip() for o in cors_origins_env.split(",") if o.strip()]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=origins if origins != ["*"] else ["*"],
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "Accept"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 app.include_router(replay_router)
