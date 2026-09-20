@@ -173,11 +173,9 @@ def execute_pcap_replay_job(
                     logger.error("Native PCAP DPI engine failed for %s: %s", pcap_path.name, pcap_exc)
 
             # Strategy 3: Ingest generated logs via ZeekLogShipper
-            from backend.app.main import ws_manager
+            from backend.app.main import alert_store, pipeline, ws_manager
             kafka_servers = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
             shipper = ZeekLogShipper(log_dir=log_dir, kafka_bootstrap_servers=kafka_servers)
-            alert_store = ClickHouseAlertStore(auto_connect=True)
-            pipeline = DetectionPipeline(store=SlidingWindowStore(use_redis=False), aggregator=AlertAggregator())
 
             for log_name in ["conn", "dns", "ssl"]:
                 log_file = Path(log_dir) / f"{log_name}.log"
