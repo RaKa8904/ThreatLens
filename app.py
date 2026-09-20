@@ -119,17 +119,7 @@ if frontend_dist:
 else:
     logger.warning("frontend/dist directory could not be located in candidates: %s", candidate_paths)
 
-# 8. Mount Gradio interface to satisfy Hugging Face Space Lifecycle Watchdog
-try:
-    import gradio as gr
-    with gr.Blocks(title="ThreatLens SOC Enclave") as demo:
-        gr.HTML("<meta http-equiv='refresh' content='0; url=/'>")
-    app = gr.mount_gradio_app(app, demo, path="/_gradio")
-    logger.info("Gradio lifecycle bridge successfully mounted.")
-except Exception as err:
-    logger.warning("Gradio mount notice: %s", err)
-
-# 9. Launch Server on Port 7860 (Hugging Face default exposed port)
+# 8. Launch Server on Port 7860 (Hugging Face default exposed port)
 if __name__ == "__main__":
     import uvicorn
     logger.info("Launching ThreatLens on Port 7860 (INGEST_SOURCE=kafka)...")
