@@ -40,6 +40,8 @@ export function LoginModal({ isOpen, onClose, onLoginSuccess }: LoginModalProps)
       }
 
       const data = await res.json();
+      sessionStorage.setItem("threatlens_token", data.access_token);
+      sessionStorage.setItem("threatlens_user", JSON.stringify(data.user));
       localStorage.setItem("threatlens_token", data.access_token);
       localStorage.setItem("threatlens_user", JSON.stringify(data.user));
 

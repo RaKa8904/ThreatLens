@@ -36,7 +36,7 @@ export function useThreatSocket(url?: string) {
     if (typeof window === "undefined") return "ws://localhost:8000/ws/threats";
     const loc = window.location;
     const protocol = loc.protocol === "https:" ? "wss:" : "ws:";
-    const token = localStorage.getItem("threatlens_token");
+    const token = sessionStorage.getItem("threatlens_token") || localStorage.getItem("threatlens_token");
     const tokenQuery = token ? `?token=${encodeURIComponent(token)}` : "";
     return `${protocol}//${loc.hostname}:8000/ws/threats${tokenQuery}`;
   })();

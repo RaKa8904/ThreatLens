@@ -28,8 +28,9 @@ export function App() {
   const [replayOpen, setReplayOpen] = useState(false);
   const [user, setUser] = useState<UserProfile | null>(() => {
     try {
-      const savedUser = localStorage.getItem("threatlens_user");
-      const token = localStorage.getItem("threatlens_token");
+      // Require explicit session login on new tab / browser window open so login page renders first
+      const savedUser = sessionStorage.getItem("threatlens_user");
+      const token = sessionStorage.getItem("threatlens_token");
       return savedUser && token ? JSON.parse(savedUser) : null;
     } catch {
       return null;
@@ -56,7 +57,7 @@ export function App() {
     return () => { mounted = false; };
   }, [alertViewMode, archivePage]);
 
-  // If user is not authenticated, render dedicated full-screen SOC Login Page first!
+  // If user is not authenticated in this session, render dedicated full-screen SOC Login Page first!
   if (!user) {
     return (
       <LoginPage
@@ -68,6 +69,8 @@ export function App() {
   }
 
   const handleLogout = () => {
+    sessionStorage.removeItem("threatlens_token");
+    sessionStorage.removeItem("threatlens_user");
     localStorage.removeItem("threatlens_token");
     localStorage.removeItem("threatlens_user");
     setUser(null);
