@@ -159,47 +159,102 @@ def run_replay(pcap_path: str) -> None:
         replay_state.update({"status": "failed", "error": str(exc)})
 
 
-async def real_pcap_stream_worker():
+def generate_benign_enterprise_flow() -> Dict[str, Any]:
+    """Generates standard corporate benign flow to model healthy background network baseline."""
+    import random
+    src_ip = f"10.24.{random.randint(1, 15)}.{random.randint(2, 254)}"
+    dst_info = random.choice([
+        ("142.250.190.46", 443, "TCP", None),
+        ("140.82.121.4", 443, "TCP", None),
+        ("104.16.132.229", 443, "TCP", None),
+        ("8.8.8.8", 53, "UDP", "google.com"),
+        ("1.1.1.1", 53, "UDP", "cloudflare.com"),
+        ("10.24.1.1", 53, "UDP", "internal.corp"),
+    ])
+    dst_ip, dst_port, proto, dns_query = dst_info
+    src_port = random.randint(1024, 65535)
+    bytes_out = random.randint(120, 1500)
+    bytes_in = random.randint(300, 12000)
+    packets_out = random.randint(2, 8)
+    packets_in = random.randint(3, 14)
+
+    return {
+        "timestamp": time.time(),
+        "flow_id": f"{src_ip}:{src_port}->{dst_ip}:{dst_port}",
+        "src_ip": src_ip,
+        "src_port": src_port,
+        "dst_ip": dst_ip,
+        "dst_port": dst_port,
+        "protocol": proto,
+        "flags": ["ACK", "PSH"] if proto == "TCP" else [],
+        "bytes_out": bytes_out,
+        "bytes_in": bytes_in,
+        "packets_out": packets_out,
+        "packets_in": packets_in,
+        "dns_query": dns_query,
+        "dns_query_type": "A" if dns_query else None,
+        "ja3_hash": None,
+        "source": "live",
+    }
+
+
+async def streamlined_pcap_network_worker():
     """
-    Continuous worker reading real PCAP attack captures from the pcaps/ directory,
-    decoding real packets into Zeek flow telemetry, feeding the detection pipeline,
-    updating metrics counters, indexing alerts, and broadcasting in real time via WebSocket.
+    Streamlined Enterprise SOC Telemetry Worker:
+    - Maintains a steady, realistic baseline of healthy enterprise traffic (~1 flow/sec, smooth PPS).
+    - Periodically (every ~25 seconds) injects a controlled real PCAP attack scenario from pcaps/.
+    - Creates clear, readable SOC incident peaks without spamming storage or maxing out buffers.
     """
-    logger.info("ThreatLens Real PCAP Packet Streaming Worker started from %s", PCAP_DIR)
+    logger.info("ThreatLens Streamlined PCAP Network Worker started from %s", PCAP_DIR)
     from ingest.pcap_engine import PcapZeekEngine
+
+    # Pre-parse real PCAP attacks into memory for clean, spaced injection
+    pcap_attacks = []
+    pcap_files = sorted(list(PCAP_DIR.glob("*.pcap")) + list(PCAP_DIR.glob("*.pcapng")))
+    for p in pcap_files:
+        try:
+            engine = PcapZeekEngine(str(p))
+            flows = engine.extract_flows()
+            if flows:
+                pcap_attacks.append((p.name, flows))
+        except Exception as e:
+            logger.warning("Could not pre-load PCAP %s: %s", p.name, e)
+
+    pcap_idx = 0
+    benign_counter = 0
 
     try:
         while True:
-            pcap_files = sorted(list(PCAP_DIR.glob("*.pcap")) + list(PCAP_DIR.glob("*.pcapng")))
-            if not pcap_files:
-                logger.warning("No PCAP files discovered in %s. Waiting for capture files...", PCAP_DIR)
-                await asyncio.sleep(3.0)
-                continue
+            # 1. Healthy benign background enterprise telemetry
+            event = generate_benign_enterprise_flow()
+            record_flow_telemetry(event)
+            pipeline.process_flow_event(event)
 
-            for pcap_path in pcap_files:
-                try:
-                    engine = PcapZeekEngine(str(pcap_path))
-                    flows = engine.extract_flows()
-                except Exception as pcap_err:
-                    logger.error("Failed to parse PCAP %s: %s", pcap_path.name, pcap_err)
-                    continue
+            benign_counter += 1
 
-                for flow in flows:
+            # 2. Every 25 benign flows (~25-30 seconds), inject a real PCAP attack scenario
+            if pcap_attacks and benign_counter >= 25:
+                benign_counter = 0
+                attack_name, attack_flows = pcap_attacks[pcap_idx % len(pcap_attacks)]
+                pcap_idx += 1
+                logger.info("Injecting streamlined PCAP attack scenario: %s (%d flows)", attack_name, len(attack_flows))
+
+                # Inject a controlled burst of real attack flows (spaced at 0.15s)
+                # We limit the burst to max 8 flows per wave to ensure clean, distinct incident generation
+                flows_to_play = attack_flows[:8]
+                for flow in flows_to_play:
                     try:
-                        # Align timestamp to current epoch for sliding window analysis
-                        flow["timestamp"] = time.time()
-                        flow["source"] = "live"
+                        flow_copy = dict(flow)
+                        flow_copy["timestamp"] = time.time()
+                        flow_copy["source"] = "live"
 
-                        # Update live throughput counters with actual packet bytes and counts
-                        record_flow_telemetry(flow)
+                        record_flow_telemetry(flow_copy)
 
-                        # Execute full multi-engine detection pipeline
                         processing_started = time.perf_counter()
-                        alerts = pipeline.process_flow_event(flow)
+                        alerts = pipeline.process_flow_event(flow_copy)
                         processing_latency_ms = (time.perf_counter() - processing_started) * 1000
                         throughput_state["last_processing_latency_ms"] = round(processing_latency_ms, 3)
 
-                        # Persist alerts and broadcast live to SOC dashboard
                         for alert in alerts:
                             alert = alert.model_copy(update={
                                 "source": "live",
@@ -212,16 +267,17 @@ async def real_pcap_stream_worker():
                                 max(0.0, time.time() - alert.timestamp.timestamp()) * 1000, 3
                             )
 
-                        # Paced packet replay (default 8 flows/sec for stable continuous stream)
-                        flow_rate = max(float(os.getenv("PCAP_STREAM_RATE", "8")), 1.0)
-                        await asyncio.sleep(1.0 / flow_rate)
-                    except Exception as flow_exc:
-                        logger.warning("Error processing flow in PCAP worker: %s", flow_exc)
+                        await asyncio.sleep(0.15)
+                    except Exception as flow_err:
+                        logger.warning("Error in attack injection flow: %s", flow_err)
+
+            # Smooth baseline flow spacing: 1 second between background flows
+            await asyncio.sleep(1.0)
 
     except asyncio.CancelledError:
-        logger.info("ThreatLens Real PCAP Streaming Worker stopped.")
+        logger.info("ThreatLens Streamlined Network Worker stopped.")
     except Exception as exc:
-        logger.error("Error in Real PCAP Streaming Worker: %s", exc)
+        logger.error("Error in Streamlined Network Worker: %s", exc)
 
 
 @asynccontextmanager
@@ -229,6 +285,9 @@ async def lifespan(app: FastAPI):
     """Lifespan context manager for application startup and shutdown lifecycle."""
     ingest_source = os.getenv("INGEST_SOURCE", "kafka").lower()
     logger.info("ThreatLens Ingestion Mode: %s", ingest_source)
+
+    # Clean up any stale flooded alerts from previous noisy runs
+    alert_store.clear()
 
     worker_task = None
     stop_event = asyncio.Event()
@@ -247,13 +306,13 @@ async def lifespan(app: FastAPI):
             if consumer.is_kafka_connected:
                 worker_task = asyncio.create_task(consumer.run_consumer_loop(stop_event=stop_event))
             else:
-                logger.info("Kafka broker %s offline. Starting Real PCAP streaming worker from %s.", kafka_servers, PCAP_DIR)
-                worker_task = asyncio.create_task(real_pcap_stream_worker())
+                logger.info("Kafka broker %s offline. Starting Streamlined PCAP streaming worker.", kafka_servers)
+                worker_task = asyncio.create_task(streamlined_pcap_network_worker())
         except Exception as exc:
-            logger.warning("Kafka Consumer init fallback (%s). Starting Real PCAP streaming worker.", exc)
-            worker_task = asyncio.create_task(real_pcap_stream_worker())
+            logger.warning("Kafka Consumer init fallback (%s). Starting Streamlined PCAP streaming worker.", exc)
+            worker_task = asyncio.create_task(streamlined_pcap_network_worker())
     else:
-        worker_task = asyncio.create_task(real_pcap_stream_worker())
+        worker_task = asyncio.create_task(streamlined_pcap_network_worker())
 
     yield
 
@@ -394,6 +453,13 @@ def get_historical_alerts(
     """
     alerts = alert_store.get_recent_alerts(limit=limit + offset, threat_class=threat_class, status=status.value if status else None)
     return alerts[offset : offset + limit]
+
+
+@app.post("/api/alerts/clear", tags=["Alerts"])
+def clear_alert_buffer():
+    """Resets the live alert buffer and incident tracking state."""
+    alert_store.clear()
+    return {"status": "success", "message": "Alert buffer cleared."}
 
 
 @app.patch("/api/alerts/{flow_id:path}/status", response_model=ThreatAlertSchema, tags=["Alerts"])

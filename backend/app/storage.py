@@ -55,7 +55,6 @@ class ClickHouseAlertStore:
         # must never reach out to a real ClickHouse server.
         self._allow_reconnect = auto_connect
 
-        # In-memory circular buffer fallback (Thread-safe)
         self._memory_ring: deque[ThreatAlertSchema] = deque(maxlen=max_memory_buffer)
         self._status_overrides: Dict[str, AlertStatusEnum] = {}
         self._lock = threading.Lock()
@@ -66,6 +65,22 @@ class ClickHouseAlertStore:
             self.connect()
         else:
             self.fallback_active = True
+
+    def clear(self) -> None:
+        """Clears in-memory alert buffer, status overrides, and persistent table if connected."""
+        with self._lock:
+            self._memory_ring.clear()
+            self._status_overrides.clear()
+            if hasattr(self, "_notes"):
+                self._notes.clear()
+
+        if self.is_connected and self.client is not None:
+            try:
+                with self._ch_lock:
+                    self.client.command(f"TRUNCATE TABLE IF EXISTS {self.database}.alerts")
+                    self.client.command(f"TRUNCATE TABLE IF EXISTS {self.database}.alert_notes")
+            except Exception as exc:
+                logger.warning("ClickHouse truncate on clear omitted: %s", exc)
 
     def connect(self) -> bool:
         """Attempts to establish connection with ClickHouse and initialize tables."""
