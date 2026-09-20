@@ -92,6 +92,9 @@ services:
       timeout: 5s
       retries: 5
       start_period: 30s
+    networks:
+      - threatlens-net
+
   # ============================================================================
   # Zeek - High-speed passive network analysis & JSON metadata generator
   # ============================================================================
