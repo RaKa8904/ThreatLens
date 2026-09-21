@@ -1,0 +1,24 @@
+name: Deployments
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  deployments: write
+
+jobs:
+  deployment:
+    name: Hugging Face Space Deployment
+    runs-on: ubuntu-latest
+    environment:
+      name: Hugging Face Space
+      url: https://notraka-threatlens.hf.space
+    steps:
+      - name: Acknowledge Live Deployment
+        run: |
+          echo "ThreatLens Live SOC is running on Hugging Face Spaces:"
+          echo "Live URL: https://notraka-threatlens.hf.space"
+          echo "Space: https://huggingface.co/spaces/NotRaka/ThreatLens"

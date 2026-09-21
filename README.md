@@ -21,7 +21,11 @@ pinned: false
 [![Redpanda / Kafka](https://img.shields.io/badge/Redpanda-Kafka_API-FA2546.svg?logo=redpanda&logoColor=white)](https://redpanda.com/)
 [![Zeek](https://img.shields.io/badge/Zeek-6.0%2B-582E91.svg?logo=zeek&logoColor=white)](https://zeek.org/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED.svg?logo=docker&logoColor=white)](https://www.docker.com/)
+[![Hugging Face Spaces](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-Live%20Demo-yellow.svg)](https://notraka-threatlens.hf.space)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-22C55E.svg)](LICENSE)
+
+> 🛡️ **Live Deployment**: [https://notraka-threatlens.hf.space](https://notraka-threatlens.hf.space)  
+> 📦 **Hugging Face Space**: [https://huggingface.co/spaces/NotRaka/ThreatLens](https://huggingface.co/spaces/NotRaka/ThreatLens)
 
 ThreatLens is an enterprise-grade, read-only passive network threat detection and forensic intelligence platform. Designed for high-throughput packet metadata inspection, sliding-window anomaly detection, and dense Security Operations Center (SOC) visualization, ThreatLens enables line-rate visibility into hostile enterprise network flows without decrypting payloads or causing inline backpressure.
 
