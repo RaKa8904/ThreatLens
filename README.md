@@ -95,6 +95,7 @@ To eliminate the risk of operational disruption, transmission leakage, or discov
   - `live`: Directly attaches to hardware TAP / SPAN interfaces for line-rate passive packet inspection.
 - **Optimized Zeek Policy (`local.zeek`)**: Configured for line-rate JSON streaming with ISO8601 timestamps (`JSON::TS_ISO8601`), silent disabling of noisy telemetry (`PacketFilter`, `Weird`, `Notice`, `Files`, `Software`, `Reporter`), and dynamic extraction of TLS JA3/JA4 cryptographic fingerprints.
 - **Cross-Protocol Session Correlation (`zeek_kafka_shipper.py`)**: Asynchronously tails `conn.log`, `dns.log`, and `ssl.log`. By tracking shared Zeek session UIDs, the shipper correlates cryptographic TLS JA3 hashes and DNS query names directly to parent connection 5-tuples and decodes TCP history flags (`S` = SYN, `h` = SYN+ACK, `A` = ACK, `D` = PSH, `F` = FIN, `R` = RST) before streaming to Redpanda.
+- **Resilient Pipeline Pre-flights**: Fast socket pre-flight checks for ClickHouse and KafkaProducer ensure the ingestion pipeline and Zeek log shippers fail fast and recover gracefully during broker or DB unavailability without hanging.
 - **Pluggable Ingestion Runtime Switch**: The backend supports zero-downtime switching between `INGEST_SOURCE=synthetic` (internal generator) and `INGEST_SOURCE=kafka` (live Zeek / PCAP streaming) via environment configuration.
 
 ### B. Stateful Temporal Memory
@@ -307,7 +308,7 @@ pip install -r backend/requirements.txt
 ThreatLens supports two pluggable ingestion runtime modes configured via `.env`:
 
 #### Mode A: Real-Time Synthetic Stream (Default)
-Generates pseudo-random background enterprise traffic mixed with realistic multi-vector attack bursts:
+Generates a healthy enterprise telemetry baseline mixed with controlled periodic PCAP attack injections, simulating all 6 threat vectors in a balanced round-robin cycle at a tuned stream rate of 3-4 flows/sec with dynamic jitter:
 ```bash
 # Set in .env: INGEST_SOURCE=synthetic
 # Normal startup: use ThreatLens.bat (no --reload; the reloader's watcher
@@ -318,13 +319,14 @@ uvicorn backend.app.main:app --port 8000 --reload --reload-dir backend --reload-
 #### Mode B: Live PCAP Replay & Zeek Ingestion Pipeline
 Processes real packet captures or hardware TAP feeds via the containerized Zeek sensor:
 ```bash
-# 1. Generate sample multi-threat PCAP with pure Python generator (or drop any .pcap into pcaps/):
+# 1. Generate all 6 sample threat vector PCAPs with pure Python generator (or drop any .pcap into pcaps/):
 python ingest/zeek/generate_sample_pcap.py --output pcaps/sample_attack.pcap
 
 # The running 'threatlens-zeek' container automatically detects the file via inotify,
 # applies local.zeek policies, extracts JA3 hashes, and writes JSON logs to logs/
 
 # 2. Ship normalized Zeek logs to Redpanda topics (traffic-flows, dns-queries, ssl-metadata):
+# PCAP replay alerts are fully wired into the global pipeline to directly populate the SOC dashboard.
 python ingest/producers/zeek_kafka_shipper.py --mode batch
 
 # 3. Start FastAPI with Kafka consumer enabled:

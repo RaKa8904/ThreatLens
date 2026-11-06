@@ -76,6 +76,7 @@ data/
 *.swo
 .DS_Store
 Thumbs.db
+*.lnk
 
 # documents and user uploads
 *.pdf

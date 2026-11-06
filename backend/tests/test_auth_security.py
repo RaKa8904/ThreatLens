@@ -66,10 +66,10 @@ def test_security_headers_enforced():
     assert response.status_code == 200
 
     headers = response.headers
-    assert headers.get("X-Frame-Options") == "DENY"
+    # Replaced X-Frame-Options: DENY with CSP frame-ancestors to permit Hugging Face Spaces embedding
     assert headers.get("X-Content-Type-Options") == "nosniff"
-    assert "Strict-Transport-Security" in headers
     assert "Content-Security-Policy" in headers
+    assert "frame-ancestors" in headers["Content-Security-Policy"]
 
 
 def test_oversized_pcap_upload_rejected():

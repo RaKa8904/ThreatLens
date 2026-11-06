@@ -1,17 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { motion, animate } from "motion/react";
+import { useMotionEnabled, motionTokens } from "@/lib/motion";
+import { getDevStateOverride } from "@/lib/devState";
+import { getShortThreatName } from "@/lib/threatMapping";
 import {
   AlertStatusEnum,
-  SeverityLevel,
   ThreatAlertSchema,
   ThreatClassEnum,
   getAlertIdentity,
@@ -33,6 +26,7 @@ interface ThreatTableProps {
   archiveHasNext?: boolean;
   onArchivePageChange?: (page: number) => void;
   onAlertStatusChange?: (flowId: string, status: AlertStatusEnum) => Promise<void>;
+  onClearSeverityFilter?: () => void;
 }
 
 export function ThreatTable({
@@ -48,16 +42,85 @@ export function ThreatTable({
   archiveHasNext = false,
   onArchivePageChange,
   onAlertStatusChange,
+  onClearSeverityFilter,
 }: ThreatTableProps) {
   const [selectedClass, setSelectedClass] = useState<string>("ALL");
   const [minConfidence, setMinConfidence] = useState<number>(0.0);
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [statusUpdating, setStatusUpdating] = useState<string | null>(null);
   const [freshAlerts, setFreshAlerts] = useState<Set<string>>(new Set());
+  const [animatedFreshAlerts, setAnimatedFreshAlerts] = useState<Set<string>>(new Set());
   const knownAlertsRef = useRef<Set<string> | null>(null);
   const freshTimeoutsRef = useRef<Map<string, number>>(new Map());
+  
+  const motionEnabled = useMotionEnabled();
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const tableBodyRef = useRef<HTMLDivElement>(null);
+  const rowRefs = useRef<Array<HTMLDivElement | null>>([]);
+  const [isScrolled, setIsScrolled] = useState(false);
+
+  // Stream hover-pause state
+  const [isHoveringTable, setIsHoveringTable] = useState(false);
+  const [isRowFocused, setIsRowFocused] = useState(false);
+  const [ariaAnnouncement, setAriaAnnouncement] = useState<string>("");
+  const unpauseTimerRef = useRef<number | null>(null);
+  const [pausedSnapshot, setPausedSnapshot] = useState<ThreatAlertSchema[]>(alerts);
 
   const getAlertKey = (alert: ThreatAlertSchema) => getAlertIdentity(alert);
+
+  const isDrawerOpen = selectedAlert !== null;
+  const isDocHidden = typeof document !== "undefined" && document.hidden;
+  const isPaused = viewMode === "live" && (isHoveringTable || isRowFocused || dropdownOpen || isDrawerOpen);
+  const wasPausedRef = useRef(false);
+
+  // Maintain paused snapshot vs live alerts
+  useEffect(() => {
+    if (isPaused) {
+      if (!wasPausedRef.current) {
+        setPausedSnapshot(alerts);
+        setAriaAnnouncement("Stream paused");
+      }
+      wasPausedRef.current = true;
+    } else {
+      if (wasPausedRef.current) {
+        setPausedSnapshot(alerts);
+      }
+      wasPausedRef.current = false;
+    }
+  }, [isPaused, alerts]);
+
+  // Count pending new alerts while paused
+  const snapshotKeys = new Set(pausedSnapshot.map(getAlertKey));
+  const pendingCount = isPaused ? alerts.filter((a) => !snapshotKeys.has(getAlertKey(a))).length : 0;
+
+  const handleResume = () => {
+    setIsHoveringTable(false);
+    setIsRowFocused(false);
+    setPausedSnapshot(alerts);
+    setAriaAnnouncement("Stream resumed");
+  };
+
+  const handleTableMouseEnter = () => {
+    if (unpauseTimerRef.current) {
+      window.clearTimeout(unpauseTimerRef.current);
+      unpauseTimerRef.current = null;
+    }
+    setIsHoveringTable(true);
+  };
+
+  const handleTableMouseLeave = () => {
+    if (unpauseTimerRef.current) {
+      window.clearTimeout(unpauseTimerRef.current);
+    }
+    // 300ms debounce before flushing buffer
+    unpauseTimerRef.current = window.setTimeout(() => {
+      setIsHoveringTable(false);
+      unpauseTimerRef.current = null;
+    }, 300);
+  };
+
+  const alertsToDisplay = isPaused ? pausedSnapshot : alerts;
+  const skipAnimation = !motionEnabled || isScrolled || isDrawerOpen || dropdownOpen || isDocHidden || isPaused;
 
   useEffect(() => {
     const currentKeys = new Set(alerts.map(getAlertKey));
@@ -75,90 +138,35 @@ export function ThreatTable({
             next.delete(key);
             return next;
           });
+          setAnimatedFreshAlerts((current) => {
+            const next = new Set(current);
+            next.delete(key);
+            return next;
+          });
           freshTimeoutsRef.current.delete(key);
-        }, 950);
+        }, 900);
         freshTimeoutsRef.current.set(key, timeout);
       });
+
+      if (!skipAnimation && viewMode === "live") {
+        const k = Math.min(newKeys.length, 5);
+        const animatedKeys = newKeys.slice(0, k);
+        setAnimatedFreshAlerts((current) => new Set([...current, ...animatedKeys]));
+
+        if (tableBodyRef.current) {
+          animate(tableBodyRef.current, { y: [-k * 44, 0] }, { duration: 0.2, ease: motionTokens.easing.standard as any });
+        }
+      }
     }
     knownAlertsRef.current = currentKeys;
-  }, [alerts]);
+  }, [alerts, skipAnimation, viewMode]);
 
   useEffect(() => () => {
     freshTimeoutsRef.current.forEach((timeout) => window.clearTimeout(timeout));
+    if (unpauseTimerRef.current) window.clearTimeout(unpauseTimerRef.current);
   }, []);
 
-  // Severity styling keyed on the backend-supplied alert.severity; confidence
-  // is displayed alongside but never used to re-derive the severity band.
-  const getSeverityBadge = (severity: SeverityLevel, score: number) => {
-    const label = `${severity ? severity.toUpperCase() : "INFO"} (${(score * 100).toFixed(0)}%)`;
-    const styles: Record<SeverityLevel, string> = {
-      critical: "bg-rose-500/20 text-rose-400 border border-rose-500/30",
-      high: "bg-orange-500/20 text-orange-400 border border-orange-500/40",
-      moderate: "bg-yellow-500/20 text-yellow-400 border border-yellow-500/30",
-      low: "bg-zinc-700/30 text-zinc-400 border border-zinc-700/40",
-    };
-    const style = styles[severity] || styles.low;
-    return (
-      <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-mono font-bold ${style}`}>
-        {label}
-      </span>
-    );
-  };
 
-  const getConfidenceProgressBar = (score: number, severity: SeverityLevel) => {
-    const width = Math.min(100, Math.max(5, Math.round(score * 100)));
-    const barColor: Record<SeverityLevel, string> = {
-      critical: "bg-rose-500",
-      high: "bg-orange-500",
-      moderate: "bg-yellow-500",
-      low: "bg-zinc-500",
-    };
-    const color = barColor[severity] || barColor.low;
-
-    return (
-      <div className="w-[70px] bg-zinc-800 rounded-full h-1 overflow-hidden">
-        <div
-          className={`h-full ${color} transition-all duration-300`}
-          style={{ width: `${width}%` }}
-        />
-      </div>
-    );
-  };
-
-  const getStatusStyle = (status: AlertStatusEnum | string | undefined) => {
-    switch (status) {
-      case AlertStatusEnum.NEW:
-      case "new":
-        return "bg-rose-500/15 text-rose-400 border-rose-500/30 font-semibold";
-      case AlertStatusEnum.ACKNOWLEDGED:
-      case "acknowledged":
-        return "bg-sky-500/15 text-sky-400 border-sky-500/30 font-medium";
-      case AlertStatusEnum.INVESTIGATING:
-      case "investigating":
-        return "bg-purple-500/15 text-purple-400 border-purple-500/30 font-medium";
-      case AlertStatusEnum.RESOLVED:
-      case "resolved":
-        return "bg-emerald-500/15 text-emerald-400 border-emerald-500/30 font-medium";
-      case AlertStatusEnum.FALSE_POSITIVE:
-      case "false_positive":
-        return "bg-zinc-800/50 text-zinc-400 border-zinc-700/40";
-      default:
-        return "bg-zinc-900 text-zinc-300 border-zinc-800";
-    }
-  };
-
-  const getRowSeverityGradient = (severity: SeverityLevel) => {
-    switch (severity) {
-      case "critical":
-        return "bg-gradient-to-r from-rose-950/25 via-rose-950/5 to-transparent border-rose-900/40";
-      case "high":
-        return "bg-gradient-to-r from-orange-950/25 via-orange-950/5 to-transparent border-orange-900/40";
-      case "moderate":
-        return "bg-gradient-to-r from-amber-950/15 via-amber-950/5 to-transparent border-amber-900/30";
-      default:
-        return "bg-gradient-to-r from-zinc-900/10 via-transparent to-transparent";
-    }
-  };
 
   const getEvidenceTags = (alert: ThreatAlertSchema) => {
     const tags: string[] = [];
@@ -175,7 +183,8 @@ export function ThreatTable({
   };
 
   // Filter alerts
-  const filteredAlerts = alerts.filter((alert) => {
+  const devState = getDevStateOverride();
+  const filteredAlerts = devState === "filtered-empty" ? [] : alertsToDisplay.filter((alert) => {
     if (timeWindowTimestamp !== null) {
       const alertTimestamp = new Date(alert.timestamp).getTime();
       if (isNaN(alertTimestamp) || Math.abs(alertTimestamp - timeWindowTimestamp) > 5000) return false;
@@ -213,82 +222,96 @@ export function ThreatTable({
   });
 
   return (
-    <div className="h-[600px] rounded-xl border border-zinc-800/80 bg-[#090d16]/80 backdrop-blur-xl overflow-hidden flex flex-col">
-      {/* Table Filter Controls Header */}
-      <div className="p-3 border-b border-zinc-800/80 flex flex-wrap items-center justify-between gap-3 bg-[#090d16]">
-        <div className="flex items-center space-x-2">
-          <span className="text-xs font-mono font-semibold text-zinc-300 uppercase tracking-wider">
-            {viewMode === "live" ? "Live Stream" : "Archive REST"}
-          </span>
-          <Badge variant="outline" className="font-mono text-[10px] text-zinc-400 border-zinc-700">
-            {filteredAlerts.length} / {alerts.length} {viewMode === "live" ? "Live Buffer" : "Archive Page"}
-          </Badge>
-          <div className="flex items-center gap-1">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => onViewModeChange?.("live")}
-              className={`h-6 px-2 text-[10px] font-mono ${viewMode === "live" ? "border-emerald-500/50 text-emerald-300" : "border-zinc-800 text-zinc-500"}`}
-            >
-              LIVE WS
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => onViewModeChange?.("archive")}
-              className={`h-6 px-2 text-[10px] font-mono ${viewMode === "archive" ? "border-cyan-500/50 text-cyan-300" : "border-zinc-800 text-zinc-500"}`}
-            >
-              ARCHIVE REST
-            </Button>
+    <div className="flex flex-col flex-1 min-h-[400px]">
+      {/* Table Toolbar */}
+      <div className="flex items-center justify-between pb-4 border-b border-[var(--hairline)]">
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
+            <h2 className="text-[length:var(--text-label)] text-[var(--text-secondary)] uppercase tracking-widest opacity-80 h-[16px] flex items-center">Live Stream</h2>
+            <div className="px-1.5 py-0.5 rounded bg-[var(--bg-surface-hover)] border border-[var(--hairline)] text-[10px] font-mono text-[var(--text-secondary)] tracking-widest">
+              {filteredAlerts.length} / {alerts.length}
+            </div>
           </div>
+          
+          <div className="flex bg-[var(--bg-surface)] rounded border border-[var(--hairline)] p-0.5 relative">
+            <button
+              onClick={() => onViewModeChange?.("live")}
+              className={`relative z-10 h-[28px] px-3 rounded-sm text-[10px] font-mono tracking-widest transition-colors ${viewMode === "live" ? "text-[var(--text-primary)]" : "text-[var(--text-muted)] hover:text-[var(--text-secondary)]"} flex items-center gap-1.5`}
+            >
+              {viewMode === "live" && motionEnabled && (
+                <motion.div layoutId="viewModePill" className="absolute inset-0 bg-[var(--bg-surface-hover)] rounded-sm shadow-sm" transition={motionTokens.spring.press} />
+              )}
+              {viewMode === "live" && !motionEnabled && (
+                <div className="absolute inset-0 bg-[var(--bg-surface-hover)] rounded-sm shadow-sm" />
+              )}
+              <span className="relative z-10 flex items-center gap-1.5">
+                {viewMode === "live" && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" />}
+                LIVE WS
+              </span>
+            </button>
+            <button
+              onClick={() => onViewModeChange?.("archive")}
+              className={`relative z-10 h-[28px] px-3 rounded-sm text-[10px] font-mono tracking-widest transition-colors ${viewMode === "archive" ? "text-[var(--text-primary)]" : "text-[var(--text-muted)] hover:text-[var(--text-secondary)]"}`}
+            >
+              {viewMode === "archive" && motionEnabled && (
+                <motion.div layoutId="viewModePill" className="absolute inset-0 bg-[var(--bg-surface-hover)] rounded-sm shadow-sm" transition={motionTokens.spring.press} />
+              )}
+              {viewMode === "archive" && !motionEnabled && (
+                <div className="absolute inset-0 bg-[var(--bg-surface-hover)] rounded-sm shadow-sm" />
+              )}
+              <span className="relative z-10">ARCHIVE REST</span>
+            </button>
+          </div>
+
           {viewMode === "archive" && (
-            <div className="flex items-center gap-1 font-mono text-[10px] text-zinc-500">
-              <Button variant="outline" size="sm" disabled={archivePage === 0} onClick={() => onArchivePageChange?.(Math.max(0, archivePage - 1))} className="h-6 px-2 text-[10px]">PREV</Button>
-              <span>PAGE {archivePage + 1}</span>
-              <Button variant="outline" size="sm" disabled={!archiveHasNext} onClick={() => onArchivePageChange?.(archivePage + 1)} className="h-6 px-2 text-[10px]">NEXT</Button>
+            <div className="flex items-center gap-1 font-mono text-[10px] text-[var(--text-muted)] ml-2">
+              <button disabled={archivePage === 0} onClick={() => onArchivePageChange?.(Math.max(0, archivePage - 1))} className="h-[28px] px-2 rounded hover:text-[var(--text-primary)] disabled:opacity-50">PREV</button>
+              <span className="px-2">PAGE {archivePage + 1}</span>
+              <button disabled={!archiveHasNext} onClick={() => onArchivePageChange?.(archivePage + 1)} className="h-[28px] px-2 rounded hover:text-[var(--text-primary)] disabled:opacity-50">NEXT</button>
             </div>
           )}
+
           {timeWindowTimestamp !== null && (
-            <Button
-              variant="outline"
-              size="sm"
+            <button
               onClick={onClearTimeWindow}
-              className="h-6 px-2 text-[10px] font-mono border-cyan-500/40 text-cyan-300"
+              className="h-[28px] px-3 ml-2 rounded bg-cyan-500/10 border border-cyan-500/20 text-[10px] font-mono text-cyan-400 tracking-widest flex items-center gap-2 hover:bg-cyan-500/20 transition-colors"
             >
-              WINDOW {new Date(timeWindowTimestamp).toISOString().substring(11, 19)} ×
-            </Button>
+              WINDOW {new Date(timeWindowTimestamp).toISOString().substring(11, 19)} <span className="text-[14px] leading-none">×</span>
+            </button>
           )}
         </div>
 
-        {/* Filter controls */}
-        <div className="flex flex-wrap items-center gap-2 text-xs">
-          {/* Search box */}
-          <input
-            type="text"
-            placeholder="Filter IP or keywords..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="h-7 px-2.5 rounded bg-zinc-900 border border-zinc-800 text-zinc-200 placeholder:text-zinc-500 font-mono text-xs focus:outline-none focus:border-zinc-700 w-44"
-          />
+        <div className="flex items-center gap-3">
+          {/* Search */}
+          <div className="relative">
+            <svg className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--text-muted)]" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            <input
+              type="text"
+              placeholder="Search IP, vector..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="h-[32px] w-[180px] pl-8 pr-3 rounded bg-[var(--bg-base)] border border-[#3f3f46] text-[11px] font-mono text-[var(--text-primary)] placeholder-[var(--text-muted)] focus:outline-none focus:border-emerald-500/50"
+            />
+          </div>
 
-          {/* Class Filter Dropdown */}
-          <select
-            value={selectedClass}
-            onChange={(e) => setSelectedClass(e.target.value)}
-            className="h-7 px-2 rounded bg-zinc-900 border border-zinc-800 text-zinc-200 font-mono text-xs focus:outline-none focus:border-zinc-700"
-          >
-            <option value="ALL">All Threat Vectors</option>
-            {Object.values(ThreatClassEnum).map((cls) => (
-              <option key={cls} value={cls}>
-                {cls}
-              </option>
-            ))}
-          </select>
+          {/* Vector filter */}
+          <div className="relative">
+            <select
+              value={selectedClass}
+              onChange={(e) => setSelectedClass(e.target.value)}
+              className="h-[32px] w-[160px] pl-3 pr-8 rounded bg-[var(--bg-base)] border border-[#3f3f46] text-[11px] font-mono text-[var(--text-primary)] appearance-none focus:outline-none focus:border-emerald-500/50 cursor-pointer"
+            >
+              <option value="ALL">All Vectors</option>
+              {Object.values(ThreatClassEnum).map((cls) => (
+                <option key={cls} value={cls}>{cls}</option>
+              ))}
+            </select>
+            <svg className="absolute right-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[var(--text-muted)] pointer-events-none" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+          </div>
 
-          {/* Confidence Slider Filter */}
-          <div className="flex items-center space-x-1.5 px-2 py-1 rounded bg-zinc-900 border border-zinc-800 font-mono text-[11px] text-zinc-400">
-            <span>Min Conf:</span>
-            <span className="text-emerald-400 font-semibold">{minConfidence.toFixed(2)}</span>
+          {/* Confidence slider */}
+          <div className="flex items-center gap-2 h-[32px] px-3 rounded bg-[var(--bg-base)] border border-[#3f3f46] text-[11px] font-mono">
+            <span className="text-[var(--text-muted)]">Conf &ge;</span>
             <input
               type="range"
               min="0.0"
@@ -296,108 +319,248 @@ export function ThreatTable({
               step="0.05"
               value={minConfidence}
               onChange={(e) => setMinConfidence(parseFloat(e.target.value))}
-              className="w-16 accent-emerald-400 cursor-pointer"
+              className="w-20 appearance-none h-[2px] bg-[var(--hairline)] rounded-full outline-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:bg-[var(--text-secondary)] [&::-webkit-slider-thumb]:rounded-full cursor-pointer"
             />
+            <span className="text-[var(--text-primary)] min-w-[3ch]">{(minConfidence * 100).toFixed(0)}%</span>
           </div>
 
           {(selectedClass !== "ALL" || minConfidence > 0 || searchQuery.trim() !== "" || severityFilter !== null || timeWindowTimestamp !== null) && (
-            <Button
-              variant="ghost"
-              size="sm"
+            <motion.button
+              whileTap={{ scale: 0.97 }}
+              transition={motionTokens.spring.press as any}
               onClick={() => {
                 setSelectedClass("ALL");
                 setMinConfidence(0.0);
                 setSearchQuery("");
                 if (onClearTimeWindow) onClearTimeWindow();
+                if (onClearSeverityFilter) onClearSeverityFilter();
               }}
-              className="h-7 px-2 text-[10px] font-mono text-rose-400 hover:text-rose-300 hover:bg-rose-500/10 border border-rose-500/20"
+              className="h-[32px] px-3 rounded border border-[#3f3f46] bg-[var(--bg-base)] text-[10px] font-mono text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors duration-150"
             >
-              RESET FILTERS
-            </Button>
+              CLEAR
+            </motion.button>
           )}
         </div>
       </div>
 
       {/* Main Table */}
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <Table>
-          <TableHeader>
-            <TableRow className="hover:bg-transparent border-b border-zinc-800/80">
-              <TableHead className="w-36 text-zinc-500 font-mono text-[length:var(--text-label)]">TIMESTAMP (UTC)</TableHead>
-              <TableHead className="min-w-[220px] text-zinc-500 font-mono text-[length:var(--text-label)]">CANONICAL FLOW (SRC → DST)</TableHead>
-              <TableHead className="w-48 text-zinc-500 font-mono text-[length:var(--text-label)]">THREAT CLASS</TableHead>
-              <TableHead className="w-40 text-zinc-500 font-mono text-[length:var(--text-label)]">SEVERITY / CONFIDENCE</TableHead>
-              <TableHead className="w-32 text-zinc-500 font-mono text-[length:var(--text-label)]">STATUS</TableHead>
-              <TableHead className="text-right w-24 text-zinc-500 font-mono text-[length:var(--text-label)]">ACTIONS</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
+      <div
+        className="flex-1 overflow-auto mt-4 min-h-0 relative border-t border-transparent"
+        onScroll={(e) => setIsScrolled(e.currentTarget.scrollTop > 10)}
+        onMouseEnter={handleTableMouseEnter}
+        onMouseLeave={handleTableMouseLeave}
+      >
+        <div aria-live="polite" className="sr-only">
+          {ariaAnnouncement}
+        </div>
+
+        <div className="min-w-[1080px]">
+          <div className="sticky top-0 bg-[var(--bg-base)] z-10 border-b border-[var(--hairline)] grid grid-cols-[104px_minmax(300px,520px)_minmax(220px,380px)_104px_140px_124px_88px] justify-between gap-x-4 px-4 py-3">
+            <div className="text-[length:var(--text-label)] font-mono text-[var(--text-muted)] font-normal uppercase tracking-wider whitespace-nowrap">Time</div>
+            <div className="text-[length:var(--text-label)] font-mono text-[var(--text-muted)] font-normal uppercase tracking-wider whitespace-nowrap">Flow (Src → Dst)</div>
+            <div className="text-[length:var(--text-label)] font-mono text-[var(--text-muted)] font-normal uppercase tracking-wider whitespace-nowrap">Threat Class</div>
+            <div className="text-[length:var(--text-label)] font-mono text-[var(--text-muted)] font-normal uppercase tracking-wider whitespace-nowrap">Severity</div>
+            <div className="text-[length:var(--text-label)] font-mono text-[var(--text-muted)] font-normal uppercase tracking-wider whitespace-nowrap">Confidence</div>
+            <div className="text-[length:var(--text-label)] font-mono text-[var(--text-muted)] font-normal uppercase tracking-wider whitespace-nowrap">Status</div>
+            <div className="text-[length:var(--text-label)] font-mono text-[var(--text-muted)] font-normal uppercase tracking-wider whitespace-nowrap text-right">Action</div>
+          </div>
+
+          {/* Pinned Hover Pause Banner */}
+          {isPaused && pendingCount > 0 && (
+            <div className="sticky top-[45px] z-20 flex items-center justify-between px-4 h-[32px] bg-[var(--bg-surface)] border-b border-[var(--hairline)] text-[length:var(--text-label)] font-mono text-[var(--text-secondary)] shadow-sm">
+              <div className="flex items-center gap-2">
+                <span className="h-1.5 w-1.5 rounded-full bg-[var(--live-accent)] motion-safe:animate-pulse" />
+                <span>
+                  {pendingCount > 99 ? "99+" : pendingCount} new alert{pendingCount === 1 ? "" : "s"} · Stream paused
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={handleResume}
+                className="px-2.5 py-0.5 rounded border border-[var(--hairline)] bg-[var(--bg-base)] text-[length:var(--text-label)] text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] focus:outline-none focus:ring-2 focus:ring-emerald-500/80 transition-colors"
+              >
+                Resume
+              </button>
+            </div>
+          )}
+          
+          {/* Body */}
+          <motion.div 
+            ref={tableBodyRef} 
+            className="flex flex-col divide-y divide-[var(--hairline)]"
+            key={`${selectedClass}-${minConfidence}-${searchQuery}-${severityFilter}`}
+            initial={motionEnabled ? { opacity: 0 } : false}
+            animate={motionEnabled ? { opacity: 1 } : false}
+            transition={{ duration: 0.12, ease: "easeOut" }}
+          >
             {filteredAlerts.length === 0 ? (
-              <TableRow className="hover:bg-transparent">
-                <TableCell colSpan={6} className="h-32 text-center text-zinc-500 font-mono">
+              <div className="h-40 flex flex-col items-center justify-center gap-3">
+                <span className="text-[14px] text-[var(--text-secondary)]">
                   {alerts.length === 0
-                    ? "Awaiting network flow telemetry stream..."
-                    : "No alerts match active filters."}
-                </TableCell>
-              </TableRow>
+                    ? "Waiting for telemetry"
+                    : severityFilter
+                    ? `No ${severityFilter} alerts in the current ${alerts.length}-alert buffer`
+                    : "No alerts match these filters"}
+                </span>
+                {alerts.length > 0 && (
+                  <button
+                    onClick={() => {
+                      if (severityFilter && onClearSeverityFilter) {
+                        onClearSeverityFilter();
+                      } else {
+                        setSelectedClass("ALL");
+                        setMinConfidence(0.0);
+                        setSearchQuery("");
+                        if (onClearTimeWindow) onClearTimeWindow();
+                      }
+                    }}
+                    className="px-3 py-1.5 rounded border border-[#3f3f46] bg-[var(--bg-base)] text-[12px] text-[var(--text-primary)] hover:bg-[var(--bg-surface-hover)] transition-colors focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  >
+                    {severityFilter ? "Clear severity filter" : "Clear filters"}
+                  </button>
+                )}
+              </div>
             ) : (
-              filteredAlerts.map((alert) => {
+              filteredAlerts.map((alert, idx) => {
                 const isSelected = selectedAlert?.flow_id === alert.flow_id && selectedAlert?.timestamp === alert.timestamp;
                 const alertKey = getAlertKey(alert);
+                const isFresh = freshAlerts.has(alertKey) && viewMode === "live";
+                const isAnimated = animatedFreshAlerts.has(alertKey);
+
+                // Severity colors for bars and pills
+                const severityColors: Record<string, string> = {
+                  critical: "var(--severity-critical)",
+                  high: "var(--severity-high)",
+                  moderate: "var(--severity-moderate)",
+                  low: "var(--severity-low)",
+                };
+                const sevKey = alert.severity?.toLowerCase() || "info";
+                const sevHex = severityColors[sevKey] || severityColors.low;
+
+                // Split flow IPs and ports
+                const [src, dst] = alert.flow_id.split("->").map(s => s.trim());
+                const formatIP = (ipPort: string) => {
+                  const parts = ipPort.split(":");
+                  if (parts.length > 1) {
+                    return <><span className="text-[var(--text-primary)]">{parts.slice(0, -1).join(":")}</span><span className="text-[var(--text-muted)]">:{parts[parts.length - 1]}</span></>;
+                  }
+                  return <span className="text-[var(--text-primary)]">{ipPort}</span>;
+                };
+
+                // Confidence map to 0-100 width
+                const confScore = typeof alert.confidence_score === "number" ? alert.confidence_score : parseFloat(String(alert.confidence_score || 0));
+                const confPct = Math.round(confScore * 100);
+                const barWidth = confPct;
+
+                // Tags
+                const tags = getEvidenceTags(alert);
+
+                // Status
+                const status = (alert.status ?? AlertStatusEnum.NEW).toLowerCase();
+                const statusDots: Record<string, string> = {
+                  new: "bg-rose-500",
+                  acknowledged: "bg-sky-500",
+                  investigating: "bg-purple-500",
+                  resolved: "bg-emerald-500",
+                  false_positive: "bg-zinc-500",
+                };
+                const dotColor = status !== "new" && statusDots[status] ? statusDots[status] : "bg-transparent";
+
                 return (
-                  <TableRow
+                  <motion.div
                     key={alertKey}
+                    ref={(el) => { rowRefs.current[idx] = el; }}
+                    tabIndex={0}
+                    role="row"
+                    aria-selected={isSelected}
+                    onFocus={() => setIsRowFocused(true)}
+                    onBlur={() => setIsRowFocused(false)}
                     onClick={() => onSelectAlert(alert)}
-                    className={`transition-colors duration-1000 border-b border-zinc-800/40 cursor-pointer ${getRowSeverityGradient(alert.severity)} ${freshAlerts.has(alertKey) && viewMode === "live" ? "bg-emerald-500/[0.12]" : ""} ${
-                      isSelected
-                        ? "bg-zinc-800/90 border-emerald-500/40"
-                        : "hover:bg-zinc-900/60"
+                    onKeyDown={(e) => {
+                      if (e.key === "ArrowDown") {
+                        e.preventDefault();
+                        rowRefs.current[idx + 1]?.focus();
+                      } else if (e.key === "ArrowUp") {
+                        e.preventDefault();
+                        rowRefs.current[idx - 1]?.focus();
+                      } else if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        onSelectAlert(alert);
+                      }
+                    }}
+                    initial={motionEnabled ? {
+                      ...(isAnimated ? { opacity: 0, y: -6 } : {}),
+                      backgroundColor: isFresh ? "rgba(16, 185, 129, 0.12)" : "rgba(0,0,0,0)"
+                    } : {}}
+                    animate={motionEnabled ? {
+                      ...(isAnimated ? { opacity: 1, y: 0 } : {}),
+                      backgroundColor: "rgba(0,0,0,0)"
+                    } : {}}
+                    whileHover={motionEnabled ? { backgroundColor: "var(--bg-surface-hover)" } : {}}
+                    transition={motionEnabled ? {
+                      opacity: { duration: 0.18, ease: "easeOut" },
+                      y: { duration: 0.18, ease: motionTokens.easing.standard },
+                      backgroundColor: { duration: isFresh ? 0.9 : 0.12, ease: "easeOut" }
+                    } : { duration: 0 }}
+                    className={`group h-[44px] cursor-pointer relative grid grid-cols-[104px_minmax(300px,520px)_minmax(220px,380px)_104px_140px_124px_88px] justify-between gap-x-4 px-4 items-center focus:outline-none focus:ring-2 focus:ring-emerald-500/80 focus:ring-offset-1 focus:ring-offset-[var(--bg-base)] ${
+                      !motionEnabled ? (isSelected ? "bg-[var(--bg-surface-hover)]" : isFresh ? "bg-emerald-500/[0.12]" : "bg-transparent hover:bg-[var(--bg-surface-hover)] transition-colors duration-150") : (isSelected ? "bg-[var(--bg-surface-hover)]" : "")
                     }`}
                   >
-                    {/* Timestamp */}
-                    <TableCell title={formatTimestamp(alert.timestamp)} className="font-mono text-zinc-400 text-[11px] whitespace-nowrap">
-                      {formatTimestamp(alert.timestamp).substring(11, 23)}
-                    </TableCell>
+                    {/* Left edge severity bar */}
+                    <div className="absolute left-0 top-0 bottom-0 w-[2px]" style={{ backgroundColor: sevHex }} />
 
-                    {/* Canonical Flow */}
-                    <TableCell className="font-mono text-zinc-200 text-xs">
-                      <div className="flex items-center space-x-1.5">
-                        <span className="text-emerald-400 font-medium">
-                          {alert.flow_id.split("->")[0] || alert.flow_id}
-                        </span>
-                        <span className="text-zinc-500">→</span>
-                        <span className="text-zinc-300">
-                          {alert.flow_id.split("->")[1] || ""}
-                        </span>
+                    {/* Time */}
+                    <div className="font-mono text-[length:var(--text-body)] text-[var(--text-secondary)] tabular-nums whitespace-nowrap">
+                      {formatTimestamp(alert.timestamp).substring(11, 23)}
+                    </div>
+
+                    {/* Flow */}
+                    <div className="font-mono text-[length:var(--text-body)] truncate whitespace-nowrap" title={alert.flow_id}>
+                      <div className="flex items-center gap-2 truncate">
+                        <span className="truncate">{src ? formatIP(src) : "Unknown"}</span>
+                        <svg className="w-3 h-3 text-[var(--text-muted)] shrink-0" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line><polyline points="12 5 19 12 12 19"></polyline></svg>
+                        <span className="truncate">{dst ? formatIP(dst) : "Unknown"}</span>
                       </div>
-                    </TableCell>
+                    </div>
 
                     {/* Threat Class */}
-                    <TableCell className="font-medium text-zinc-200 font-sans text-xs">
-                      <div>{alert.threat_class}</div>
-                      <div className="mt-1 flex flex-wrap gap-1">
-                        {getEvidenceTags(alert).map((tag) => (
-                          <span key={tag} className="rounded border border-cyan-500/20 bg-cyan-500/[0.06] px-1 py-0.5 text-[9px] font-mono text-cyan-300">
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
-                    </TableCell>
+                    <div className="flex items-center gap-2 text-[var(--text-primary)] text-[length:var(--text-body)] min-w-0" title={alert.threat_class}>
+                      <span className="hidden xl:inline truncate">{alert.threat_class}</span>
+                      <span className="xl:hidden inline truncate">{getShortThreatName(alert.threat_class)}</span>
+                      {tags.length > 0 && (
+                        <span className="shrink-0 px-1.5 py-[1px] rounded bg-[var(--bg-surface)] border border-[var(--hairline)] text-[9px] font-mono text-[var(--text-secondary)]">
+                          {tags[0]}
+                        </span>
+                      )}
+                    </div>
 
-                    {/* Confidence & Severity */}
-                    <TableCell>
-                      <div className="flex items-center space-x-2">
-                        {getSeverityBadge(alert.severity, alert.confidence_score)}
-                        {getConfidenceProgressBar(alert.confidence_score, alert.severity)}
-                      </div>
-                    </TableCell>
+                    {/* Severity */}
+                    <div className="flex items-center h-full">
+                      <span
+                        className="inline-flex items-center justify-center h-[20px] px-2 rounded-[2px] text-[10px] font-mono tracking-widest leading-none pt-[1px]"
+                        style={{ backgroundColor: `color-mix(in srgb, ${sevHex} 12%, transparent)`, color: sevHex }}
+                      >
+                        {alert.severity ? alert.severity.toUpperCase() : "INFO"}
+                      </span>
+                    </div>
 
-                    <TableCell onClick={(e) => e.stopPropagation()}>
-                      <select
+                    {/* Confidence */}
+                    <div className="flex items-center gap-2" title={`Confidence: ${confPct}%`}>
+                      <span className="font-mono text-[length:var(--text-body)] text-[var(--text-primary)] tabular-nums text-right w-[40px] shrink-0">{confPct}%</span>
+                      <div className="w-[64px] h-[4px] rounded-full bg-[var(--hairline)] overflow-hidden shrink-0">
+                        <div className="h-full" style={{ width: `${barWidth}%`, backgroundColor: sevHex }} />
+                      </div>
+                    </div>
+
+                    {/* Status */}
+                    <div onClick={(e) => e.stopPropagation()} className="relative shrink-0">
+                      <motion.select
+                        whileTap={{ scale: 0.97 }}
+                        transition={motionTokens.spring.press as any}
                         value={alert.status ?? AlertStatusEnum.NEW}
                         disabled={!onAlertStatusChange || statusUpdating === getAlertKey(alert)}
-                        onClick={(e) => e.stopPropagation()}
-                        onMouseDown={(e) => e.stopPropagation()}
+                        onFocus={() => setDropdownOpen(true)}
+                        onBlur={() => setDropdownOpen(false)}
                         onChange={async (event) => {
                           if (!onAlertStatusChange) return;
                           setStatusUpdating(getAlertKey(alert));
@@ -407,37 +570,38 @@ export function ThreatTable({
                             setStatusUpdating(null);
                           }
                         }}
-                        className={`h-7 max-w-32 rounded border px-2 text-[10px] font-mono cursor-pointer transition-colors focus:outline-none focus:ring-1 focus:ring-zinc-700 ${getStatusStyle(alert.status)}`}
-                        aria-label={`Status for ${alert.flow_id}`}
+                        className={`w-full h-[28px] pl-2 pr-6 rounded border border-[#3f3f46] text-[10px] font-mono uppercase appearance-none cursor-pointer focus:outline-none focus:border-[var(--text-secondary)] disabled:opacity-50 transition-colors bg-[var(--bg-base)] ${status !== "new" ? "text-[var(--text-primary)]" : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"}`}
                       >
-                        {Object.values(AlertStatusEnum).map((statusOption) => (
-                          <option key={statusOption} value={statusOption} className="bg-zinc-900 text-zinc-200 font-mono">
-                            {statusOption.replace("_", " ").toUpperCase()}
-                          </option>
+                        {Object.values(AlertStatusEnum).map((s) => (
+                          <option key={s} value={s} className="bg-[var(--bg-base)]">{s.replace("_", " ")}</option>
                         ))}
-                      </select>
-                    </TableCell>
+                      </motion.select>
+                      <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1.5 pointer-events-none">
+                        {status !== "new" && <span className={`w-1.5 h-1.5 rounded-full ${dotColor}`} />}
+                        <svg className="w-3 h-3 text-[var(--text-muted)]" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                      </div>
+                    </div>
 
                     {/* Action */}
-                    <TableCell className="text-right">
-                      <Button
-                        variant="outline"
-                        size="sm"
+                    <div className="text-right shrink-0">
+                      <motion.button
+                        whileTap={{ scale: 0.97 }}
+                        transition={motionTokens.spring.press as any}
                         onClick={(e) => {
                           e.stopPropagation();
                           onSelectAlert(alert);
                         }}
-                        className="h-6 text-[10px] px-2 font-mono border-zinc-800 bg-zinc-900 hover:bg-zinc-800 hover:text-zinc-100"
+                        className="h-[28px] px-3 rounded border border-[#3f3f46] bg-[var(--bg-base)] text-[10px] font-mono tracking-widest text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-zinc-500 transition-colors duration-150 focus:outline-none"
                       >
                         INSPECT
-                      </Button>
-                    </TableCell>
-                  </TableRow>
+                      </motion.button>
+                    </div>
+                  </motion.div>
                 );
               })
             )}
-          </TableBody>
-        </Table>
+          </motion.div>
+        </div>
       </div>
     </div>
   );

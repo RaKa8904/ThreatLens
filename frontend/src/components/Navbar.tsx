@@ -12,6 +12,8 @@ import { Badge } from "@/components/ui/badge";
 import { ConnectionStatus } from "@/hooks/useThreatSocket";
 import { UserProfile } from "@/components/LoginPage";
 
+import { getDevStateOverride } from "@/lib/devState";
+
 interface NavbarProps {
   status: ConnectionStatus;
   totalAlerts: number;
@@ -37,7 +39,63 @@ export function Navbar({
 }: NavbarProps) {
   const [utcTime, setUtcTime] = useState<string>("");
   const [menuOpen, setMenuOpen] = useState<boolean>(false);
+  const [isStale, setIsStale] = useState<boolean>(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const lastTotalFlowsRef = useRef<number>(0);
+
+  // Poll throughput metrics to detect active pipeline flow (not just WS alerts)
+  useEffect(() => {
+    const devState = getDevStateOverride();
+    if (devState === "stale") {
+      setIsStale(true);
+      return;
+    }
+    if (status !== "CONNECTED") {
+      setIsStale(false);
+      return;
+    }
+
+    let mounted = true;
+    let staleTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const checkThroughput = async () => {
+      try {
+        const res = await fetch("/api/metrics/throughput");
+        if (!res.ok || !mounted) return;
+        const json = await res.json();
+        const totalFlows: number = json.total_flows ?? 0;
+
+        if (totalFlows > lastTotalFlowsRef.current) {
+          // Pipeline is actively ingesting flows — mark as live
+          lastTotalFlowsRef.current = totalFlows;
+          setIsStale(false);
+
+          // Reset the staleness timer: if no new flows arrive within 10s, go stale
+          if (staleTimer) clearTimeout(staleTimer);
+          staleTimer = setTimeout(() => {
+            if (mounted) setIsStale(true);
+          }, 10_000);
+        }
+      } catch {
+        // Network error — leave current state
+      }
+    };
+
+    // Initial check + recurring poll every 3 seconds
+    checkThroughput();
+    const interval = setInterval(checkThroughput, 3000);
+
+    // Fallback: if the very first check doesn't arrive within 8s, mark stale
+    staleTimer = setTimeout(() => {
+      if (mounted) setIsStale(true);
+    }, 8000);
+
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+      if (staleTimer) clearTimeout(staleTimer);
+    };
+  }, [status, _totalAlerts]);
 
   useEffect(() => {
     const updateTime = () => {
@@ -63,10 +121,20 @@ export function Navbar({
   const getStatusBadge = () => {
     switch (status) {
       case "CONNECTED":
+        if (isStale) {
+          return (
+            <Badge variant="outline" className="border-amber-500/30 bg-amber-500/10 text-amber-400 gap-1.5 px-2.5 py-1 font-mono text-xs select-none">
+              <span className="relative flex h-2 w-2">
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500/50"></span>
+              </span>
+              STREAM IDLE
+            </Badge>
+          );
+        }
         return (
           <Badge variant="outline" className="border-emerald-500/30 bg-emerald-500/10 text-emerald-400 gap-1.5 px-2.5 py-1 font-mono text-xs select-none">
             <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="motion-safe:animate-heartbeat absolute inline-flex h-full w-full rounded-full bg-emerald-400"></span>
               <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
             </span>
             STREAM LIVE
@@ -75,7 +143,7 @@ export function Navbar({
       case "CONNECTING":
         return (
           <Badge variant="outline" className="border-amber-500/30 bg-amber-500/10 text-amber-400 gap-1.5 px-2.5 py-1 font-mono text-xs select-none">
-            <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse"></span>
+            <span className="h-2 w-2 rounded-full bg-amber-500 motion-safe:animate-pulse"></span>
             CONNECTING...
           </Badge>
         );
@@ -90,7 +158,7 @@ export function Navbar({
   };
 
   return (
-    <header className="sticky top-0 z-40 w-full border-b border-zinc-800/80 bg-[#090d16]/95 backdrop-blur-xl px-4 md:px-6 py-2.5 select-none">
+    <header className="sticky top-0 z-40 w-full border-b border-[var(--hairline)] bg-[var(--bg-base)]/95 backdrop-blur-xl px-4 md:px-6 py-2.5 select-none">
       <div className="flex items-center justify-between">
         {/* Left: Brand & Enclave Status */}
         <div className="flex items-center space-x-3">
@@ -140,14 +208,14 @@ export function Navbar({
                 onClick={() => setMenuOpen(!menuOpen)}
                 className="flex items-center space-x-2 bg-zinc-900/90 hover:bg-zinc-800/90 border border-zinc-800 hover:border-zinc-700 px-3 py-1.5 rounded-lg text-xs font-mono transition-all"
               >
-                <UserIcon className="h-3.5 w-3.5 text-emerald-400" />
+                <UserIcon className="h-3.5 w-3.5 text-zinc-400" />
                 <span className="text-zinc-200 font-medium">{user.username}</span>
                 <Badge
                   variant="outline"
                   className={
                     user.role === "SOC_ADMIN"
                       ? "border-rose-500/30 bg-rose-500/10 text-rose-300 text-[9px] px-1.5 py-0"
-                      : "border-emerald-500/30 bg-emerald-500/10 text-emerald-300 text-[9px] px-1.5 py-0"
+                      : "border-sky-500/30 bg-sky-500/10 text-sky-300 text-[9px] px-1.5 py-0"
                   }
                 >
                   {user.role}
@@ -157,8 +225,8 @@ export function Navbar({
 
               {/* Dropdown Menu Box */}
               {menuOpen && (
-                <div className="absolute right-0 mt-2 w-52 rounded-xl border border-zinc-800 bg-[#0c101c] p-1.5 shadow-2xl z-50 animate-in fade-in zoom-in-95 duration-100 font-mono">
-                  <div className="px-3 py-2 border-b border-zinc-800/80">
+                <div className="absolute right-0 mt-2 w-52 rounded-xl border border-[var(--hairline)] bg-[var(--bg-surface)] p-1.5 shadow-2xl z-50 animate-in fade-in zoom-in-95 duration-100 font-mono">
+                  <div className="px-3 py-2 border-b border-[var(--hairline)]">
                     <p className="text-[10px] text-zinc-400 font-semibold uppercase">Logged in as</p>
                     <p className="text-xs font-bold text-zinc-100">{user.username}</p>
                   </div>

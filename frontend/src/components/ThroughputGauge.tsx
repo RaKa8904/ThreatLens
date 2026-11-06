@@ -4,15 +4,8 @@ import {
   AreaChart,
   ResponsiveContainer,
   Tooltip,
-  XAxis,
   YAxis,
 } from "recharts";
-import {
-  Activity01Icon as Activity01,
-  CpuIcon as Cpu,
-  Database01Icon as Database,
-} from "hugeicons-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 export interface TrafficWindow {
   time: string;
@@ -40,14 +33,10 @@ function downsample(points: ThroughputPoint[]) {
 }
 
 interface ThroughputGaugeProps {
-  totalAlerts: number;
-  selectedWindow?: TrafficWindow | null;
   onWindowSelect?: (window: TrafficWindow) => void;
 }
 
 export function ThroughputGauge({
-  totalAlerts,
-  selectedWindow = null,
   onWindowSelect,
 }: ThroughputGaugeProps) {
   const [data, setData] = useState<ThroughputPoint[]>(() => {
@@ -135,141 +124,88 @@ export function ThroughputGauge({
   }));
 
   return (
-    <Card className="border-zinc-800/80 bg-[#090d16]/80 backdrop-blur-xl">
-      <CardHeader className="py-2 px-3 flex flex-row items-center justify-between border-b border-zinc-800/60 space-y-0">
-        <div className="flex items-center gap-2 min-w-0">
-          <Activity01 className="h-4 w-4 text-emerald-400" />
-          <CardTitle className="text-[length:var(--text-heading)] uppercase font-mono tracking-wider text-zinc-300 whitespace-nowrap">
-            Real-Time Network Telemetry & Throughput
-          </CardTitle>
-          <span className="text-[length:var(--text-label)] font-mono text-zinc-500 whitespace-nowrap">UTC · {visibleData.length} samples</span>
-          {selectedWindow && (
-            <span className="text-[10px] font-mono text-cyan-300">
-              WINDOW {new Date(selectedWindow.timestamp).toISOString().substring(11, 19)} · {selectedWindow.flows} FLOWS/S · {selectedWindow.pps} PPS · {selectedWindow.mbps} MB/S
-            </span>
-          )}
-        </div>
+    <div className="w-full flex flex-col gap-4">
+      {/* Top Header Row */}
+      <div className="flex items-center justify-between h-[28px]">
+        <h2 className="text-[length:var(--text-label)] text-[var(--text-secondary)] uppercase tracking-widest opacity-80 flex items-center">Throughput</h2>
+        <select
+          value={windowMinutes}
+          onChange={(event) => setWindowMinutes(Number(event.target.value) as ThroughputWindowMinutes)}
+          aria-label="Throughput chart interval"
+          className="h-[24px] rounded bg-[var(--bg-surface-hover)] border border-[var(--hairline)] px-2 text-[10px] text-[var(--text-secondary)] font-mono outline-none focus:border-emerald-500/50 cursor-pointer"
+        >
+          <option value={60}>LAST 1H</option>
+          <option value={360}>LAST 6H</option>
+          <option value={1440}>LAST 24H</option>
+        </select>
+      </div>
 
-        <div className="flex items-center gap-2 font-mono text-[length:var(--text-body)] shrink-0">
-          <select
-            value={windowMinutes}
-            onChange={(event) => setWindowMinutes(Number(event.target.value) as ThroughputWindowMinutes)}
-            aria-label="Throughput chart interval"
-            className="h-6 rounded-md bg-zinc-900 border border-zinc-700 px-2 text-[length:var(--text-label)] text-zinc-300 font-mono"
-          >
-            <option value={60}>LAST 1H</option>
-            <option value={360}>LAST 6H</option>
-            <option value={1440}>LAST 24H</option>
-          </select>
-
-        {/* Top telemetry stat pills */}
-        <div className="flex items-center gap-3 font-mono text-[length:var(--text-body)]">
-          <div className="flex items-center space-x-1 text-zinc-300">
-            <Cpu className="h-3 w-3 text-emerald-400" />
-            <span className="text-zinc-400">FLOWS/S:</span>
-            <span className="font-semibold text-emerald-300">{currentFlows}</span>
+      <div className="grid grid-cols-[auto_1fr] gap-[24px] items-center">
+        {/* Left Block: Values */}
+        <div className="flex flex-col">
+          <div className="text-[length:var(--text-display)] font-bold tabular-nums leading-none tracking-tight text-[var(--text-primary)]">
+            {currentFlows} <span className="text-[length:var(--text-label)] text-[var(--text-muted)] tracking-wider">FLOWS/S</span>
           </div>
-
-          <div className="flex items-center space-x-1 text-zinc-300">
-            <span className="text-zinc-400">PPS:</span>
-            <span className="font-semibold text-emerald-300">{currentPPS}</span>
-          </div>
-
-          <div className="flex items-center space-x-1 text-zinc-300">
-            <Database className="h-3 w-3 text-purple-400" />
-            <span className="text-zinc-400">PEAK:</span>
-            <span className="font-semibold text-purple-300">{peakMbps} Mb/s</span>
-          </div>
-
-          <div className="hidden sm:flex items-center space-x-1 text-zinc-300">
-            <span className="text-rose-400 font-semibold">TOTAL ALERTS:</span>
-            <span>{totalAlerts}</span>
+          <div className="text-[length:var(--text-label)] font-mono text-[var(--text-secondary)] flex gap-3 mt-1">
+            <span>PPS: <strong className="text-[var(--text-primary)] tabular-nums">{currentPPS}</strong></span>
+            <span>PEAK: <strong className="text-[var(--text-primary)] tabular-nums">{peakMbps} Mb/s</strong></span>
           </div>
         </div>
-        </div>
-      </CardHeader>
 
-      <CardContent className="p-2">
-        <div className="h-14 w-full">
+        {/* Right Block: Sparkline */}
+        <div className="w-full h-[52px]">
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart
               data={visibleData}
-              margin={{ top: 5, right: 5, left: -25, bottom: 0 }}
+              margin={{ top: 4, right: 0, left: 0, bottom: 2 }}
               onClick={(state) => {
                 const point = state?.activePayload?.[0]?.payload as ThroughputPoint | undefined;
                 if (point && onWindowSelect) onWindowSelect(point);
               }}
             >
               <defs>
-                <linearGradient id="flowGradient" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#10b981" stopOpacity={0.35} />
-                  <stop offset="95%" stopColor="#10b981" stopOpacity={0.0} />
-                </linearGradient>
-                <linearGradient id="ppsGradient" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="#059669" stopOpacity={0.2} />
-                  <stop offset="95%" stopColor="#059669" stopOpacity={0.0} />
+                <linearGradient id="flowSparklineGradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#10b981" stopOpacity={0.25} />
+                  <stop offset="100%" stopColor="#10b981" stopOpacity={0.0} />
                 </linearGradient>
               </defs>
-              <XAxis
-                dataKey="time"
-                stroke="#52525b"
-                fontSize={9}
-                tickLine={false}
-                axisLine={false}
-              />
-              <YAxis
-                yAxisId="flows"
-                stroke="#52525b"
-                fontSize={9}
-                tickLine={false}
-                axisLine={false}
-                domain={[0, (dataMax: number) => Math.max(10, Math.ceil(dataMax * 1.25))]}
-              />
-              <YAxis
-                yAxisId="pps"
-                orientation="right"
-                stroke="#52525b"
-                fontSize={9}
-                tickLine={false}
-                axisLine={false}
-                domain={[0, (dataMax: number) => Math.max(25, Math.ceil(dataMax * 1.25))]}
-              />
+              <YAxis hide domain={[0, (dataMax: number) => Math.max(Math.ceil(dataMax * 1.3), 10)]} />
               <Tooltip
                 contentStyle={{
-                  backgroundColor: "#090d16",
-                  borderColor: "#27272a",
-                  borderRadius: "6px",
+                  backgroundColor: "var(--bg-surface)",
+                  borderColor: "var(--hairline)",
+                  borderRadius: "4px",
                   fontSize: "11px",
                   fontFamily: "monospace",
+                  color: "var(--text-primary)",
                 }}
                 itemStyle={{ padding: "1px 0" }}
-              />
-              <Area
-                type="monotone"
-                dataKey="pps"
-                yAxisId="pps"
-                stroke="#059669"
-                strokeWidth={1.5}
-                fillOpacity={1}
-                fill="url(#ppsGradient)"
-                name="Packets/s"
+                cursor={{ stroke: "var(--hairline)", strokeWidth: 1 }}
                 isAnimationActive={false}
               />
               <Area
-                type="monotone"
+                type="step"
                 dataKey="flows"
-                yAxisId="flows"
                 stroke="#10b981"
-                strokeWidth={2}
-                fillOpacity={1}
-                fill="url(#flowGradient)"
-                name="Flows/s"
+                strokeWidth={1.5}
+                fill="url(#flowSparklineGradient)"
+                dot={(props: any) => {
+                  const { cx, cy, index } = props;
+                  if (index !== visibleData.length - 1) return <circle key={`dot-${index}`} cx={0} cy={0} r={0} />;
+                  return (
+                    <g key={`dot-${index}`}>
+                      <circle cx={cx} cy={cy} r={4} fill="#10b981" opacity={0.3} className="animate-pulse" />
+                      <circle cx={cx} cy={cy} r={2} fill="#10b981" />
+                    </g>
+                  );
+                }}
+                activeDot={{ r: 3 }}
                 isAnimationActive={false}
               />
             </AreaChart>
           </ResponsiveContainer>
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 }
