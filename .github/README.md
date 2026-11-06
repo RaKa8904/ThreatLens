@@ -85,6 +85,7 @@ To eliminate the risk of operational disruption, transmission leakage, or discov
   - `live`: Directly attaches to hardware TAP / SPAN interfaces for line-rate passive packet inspection.
 - **Optimized Zeek Policy (`local.zeek`)**: Configured for line-rate JSON streaming with ISO8601 timestamps (`JSON::TS_ISO8601`), silent disabling of noisy telemetry (`PacketFilter`, `Weird`, `Notice`, `Files`, `Software`, `Reporter`), and dynamic extraction of TLS JA3/JA4 cryptographic fingerprints.
 - **Cross-Protocol Session Correlation (`zeek_kafka_shipper.py`)**: Asynchronously tails `conn.log`, `dns.log`, and `ssl.log`. By tracking shared Zeek session UIDs, the shipper correlates cryptographic TLS JA3 hashes and DNS query names directly to parent connection 5-tuples and decodes TCP history flags (`S` = SYN, `h` = SYN+ACK, `A` = ACK, `D` = PSH, `F` = FIN, `R` = RST) before streaming to Redpanda.
+- **Resilient Pipeline Pre-flights**: Fast socket pre-flight checks for ClickHouse and KafkaProducer ensure the ingestion pipeline and Zeek log shippers fail fast and recover gracefully during broker or DB unavailability without hanging.
 - **Pluggable Ingestion Runtime Switch**: The backend supports zero-downtime switching between `INGEST_SOURCE=synthetic` (internal generator) and `INGEST_SOURCE=kafka` (live Zeek / PCAP streaming) via environment configuration.
 
 ### B. Stateful Temporal Memory
@@ -98,6 +99,13 @@ Adversaries intentionally bypass static signature firewalls by staging attacks a
 ThreatLens enforces zero packet payload decryption, preserving network privacy and cryptographic integrity:
 - **Cryptographic Fingerprinting**: Extracts client JA3 and JA4 hashes derived from TLS ClientHello parameters (ciphers, extensions, supported groups, and point formats).
 - **Sequence of Packet Lengths and Times (SPLT)**: Captures directional byte lengths and millisecond-precision packet intervals during connection negotiation to classify malicious tools without inspecting payload bytes.
+
+### D. Modernized High-Density SOC Dashboard & Telemetry Visualizations
+Built with React 18, Vite, Tailwind CSS, Recharts, and Framer Motion, the ThreatLens UI delivers line-rate observability into streaming network telemetry:
+- **Real-Time Sliding Stream Waveforms (`ThreatTrends`)**: Ticks every 1 second to advance the timeline continuously across customizable horizons (`LIVE 1M`, `LAST 5M` [default], `LAST 15M`, `LAST 1H`, `LAST 6H`). Slices threats into dynamic rate frequencies across all 6 threat vectors with smooth monotone interpolation and persistent session caching.
+- **Interactive Full-Width Throughput Telemetry (`ThroughputGauge`)**: Spans 100% of the monitor grid, replacing redundant telemetry cards. Features 3 interactive metric cards (Flows Ingress, Packet Velocity, Wire Bandwidth) that serve as 1-click chart switchers with active glow borders and indicators. Includes full-fidelity X/Y axes, units, Cartesian grid lines, and diode status badges (`ZERO-EGRESS READ-ONLY`, `RETURN PATH: NONE`).
+- **Centered Dark Fiber Enclave Authentication Portal (`LoginPage`)**: Features a centered organic fiber-optic neural network topology visual (`object-cover object-center`), radial dark vignette into `#09090b`, live promiscuous TAP stream console, and technical enclave specification cards. Bundled in pure text (Base64 WebP) to eliminate Git LFS / binary push restrictions on Hugging Face Spaces.
+- **Hierarchical Incident Clusters & Deep PCAP Forensics**: Aggregates multi-vector alerts into interactive incident groups with collapsible accordions, one-click lifecycle triage (`NEW` → `INVESTIGATING` → `RESOLVED`), and slide-over forensic dossiers with hex/ASCII payload previews and analyst notes.
 
 ---
 
@@ -203,26 +211,35 @@ ThreatLens/
 │       └── recon_engine.py         # Reconnaissance scan engine (Multi-tier endpoint cardinality dispersion)
 ├── frontend/
 │   ├── index.html                  # HTML5 template with dark theme and Inter/JetBrains Mono fonts
-│   ├── package.json                # React 18, Vite, Tailwind CSS, Recharts, Hugeicons, and class utilities
+│   ├── package.json                # React 18, Vite, Tailwind CSS, Recharts, Framer Motion, Hugeicons
 │   ├── postcss.config.js           # PostCSS Tailwind CSS pipeline
 │   ├── tailwind.config.js          # Tailwind CSS theme tokens & dark color configurations
 │   ├── tsconfig.json               # TypeScript compiler options & '@/*' path alias
 │   ├── tsconfig.node.json          # Vite node configuration
 │   ├── vite.config.ts              # Vite dev server with proxy routing for /api and /ws
 │   └── src/
-│       ├── App.tsx                 # Main SOC Enclave application layout with KPI cards & live data feeds
-│       ├── index.css               # Global styles, dark tokens, and customized SOC scrollbars
+│       ├── App.tsx                 # Main SOC Enclave layout with KPI cards, expanded throughput & threat stream
+│       ├── index.css               # Global styles, dark WCAG AA tokens, and customized SOC scrollbars
 │       ├── main.tsx                # React DOM root entrypoint
+│       ├── assets/
+│       │   └── heroImage.ts        # Base64 WebP encoded dark fiber neural network visual (plain-text bundled)
 │       ├── components/
+│       │   ├── AnimatedNumber.tsx  # Spring-interpolated tabular numeric transitions
+│       │   ├── DashboardSkeleton.tsx# Synchronized loading skeletons matching exact widget dimensions
 │       │   ├── DetectionConfig.tsx # Slide-over rule management: runtime thresholds & suppression rule CRUD
-│       │   ├── ForensicDrawer.tsx  # Slide-over forensic sheet: telemetry metrics, JA3 copy & raw JSON viewer
-│       │   ├── Navbar.tsx          # Brand header: live stream pulse pill, real-time UTC clock & freeze toggle
-│       │   ├── ThreatTable.tsx     # High-density alert table: severity badges, progress bars, search & filters
-│       │   ├── ThroughputGauge.tsx # Recharts Area chart: real-time flows/sec, packets/sec (PPS) & peak Mbps
+│       │   ├── ForensicDrawer.tsx  # Deep forensic dossier: SPLT metrics, JA3 copy, timeline & analyst notes
+│       │   ├── IncidentsPanel.tsx  # Collapsible incident groups with one-click lifecycle triage
+│       │   ├── LoginPage.tsx       # Centered fiber visual, enclave specs, RBAC quick-fill & live TAP console
+│       │   ├── Navbar.tsx          # Brand header: live stream pulse pill, real-time UTC clock & user badge
+│       │   ├── ThreatTable.tsx     # High-density alert stream: severity badges, inline triage & search filters
+│       │   ├── ThreatTrends.tsx    # 1-second sliding-window waveform across all 6 threat vectors
+│       │   ├── ThroughputGauge.tsx # Full-width multi-metric stream area chart with interactive tab switchers
 │       │   └── ui/                 # Reusable shadcn/ui primitives (badge, button, card, sheet, table, tabs, tooltip)
 │       ├── hooks/
 │       │   └── useThreatSocket.ts  # Resilient auto-reconnecting WebSocket hook with rolling buffer & pause toggle
 │       ├── lib/
+│       │   ├── motion.ts           # Framer Motion tokens, spring physics & prefers-reduced-motion hook
+│       │   ├── threatMapping.ts    # Short threat names and color mapping helpers
 │       │   └── utils.ts            # Class merging utility (clsx + tailwind-merge) and formatting helpers
 │       └── types/
 │           └── threat.ts           # Synchronized TypeScript interfaces matching backend Pydantic schemas
@@ -297,7 +314,7 @@ pip install -r backend/requirements.txt
 ThreatLens supports two pluggable ingestion runtime modes configured via `.env`:
 
 #### Mode A: Real-Time Synthetic Stream (Default)
-Generates pseudo-random background enterprise traffic mixed with realistic multi-vector attack bursts:
+Generates a healthy enterprise telemetry baseline mixed with controlled periodic PCAP attack injections, simulating all 6 threat vectors in a balanced round-robin cycle at a tuned stream rate of 3-4 flows/sec with dynamic jitter:
 ```bash
 # Set in .env: INGEST_SOURCE=synthetic
 # Normal startup: use ThreatLens.bat (no --reload; the reloader's watcher
@@ -308,13 +325,14 @@ uvicorn backend.app.main:app --port 8000 --reload --reload-dir backend --reload-
 #### Mode B: Live PCAP Replay & Zeek Ingestion Pipeline
 Processes real packet captures or hardware TAP feeds via the containerized Zeek sensor:
 ```bash
-# 1. Generate sample multi-threat PCAP with pure Python generator (or drop any .pcap into pcaps/):
+# 1. Generate all 6 sample threat vector PCAPs with pure Python generator (or drop any .pcap into pcaps/):
 python ingest/zeek/generate_sample_pcap.py --output pcaps/sample_attack.pcap
 
 # The running 'threatlens-zeek' container automatically detects the file via inotify,
 # applies local.zeek policies, extracts JA3 hashes, and writes JSON logs to logs/
 
 # 2. Ship normalized Zeek logs to Redpanda topics (traffic-flows, dns-queries, ssl-metadata):
+# PCAP replay alerts are fully wired into the global pipeline to directly populate the SOC dashboard.
 python ingest/producers/zeek_kafka_shipper.py --mode batch
 
 # 3. Start FastAPI with Kafka consumer enabled:
@@ -344,67 +362,37 @@ Open the dashboard in your browser: [http://localhost:5173](http://localhost:517
 ---
 
 ### Step 5: Execute Complete Test Suite
-Run all 50 statistical, detection engine, pipeline, PCAP replay, and API integration tests:
+Run all 141 statistical, detection engine, pipeline, PCAP replay, authentication security, and storage resilience tests:
 ```bash
-python -m unittest discover -s backend/tests -v
+pytest backend/tests -v
 ```
 
 Expected output:
 ```text
-test_get_alerts_unfiltered (test_api.TestFastAPIGateway.test_get_alerts_unfiltered) ... ok
-test_get_alerts_with_threat_class_filter (test_api.TestFastAPIGateway.test_get_alerts_with_threat_class_filter) ... ok
-test_health_endpoint (test_api.TestFastAPIGateway.test_health_endpoint) ... ok
-test_metrics_throughput_endpoint (test_api.TestFastAPIGateway.test_metrics_throughput_endpoint) ... ok
-test_websocket_threat_stream (test_api.TestFastAPIGateway.test_websocket_threat_stream) ... ok
-test_async_process_flow_event (test_engines.TestPipelineAndAggregator.test_async_process_flow_event) ... ok
-test_benign_traffic_no_false_positives (test_engines.TestPipelineAndAggregator.test_benign_traffic_no_false_positives) ... ok
-test_pipeline_all_threat_classes_produce_valid_schemas (test_engines.TestPipelineAndAggregator.test_pipeline_all_threat_classes_produce_valid_schemas) ... ok
-test_pydantic_schema_strict_conformance (test_engines.TestPipelineAndAggregator.test_pydantic_schema_strict_conformance) ... ok
-test_beaconing_engine_detection (test_engines.TestThreatDetectionEngines.test_beaconing_engine_detection) ... ok
-test_ddos_engine_detection (test_engines.TestThreatDetectionEngines.test_ddos_engine_detection) ... ok
-test_dns_engine_detection (test_engines.TestThreatDetectionEngines.test_dns_engine_detection) ... ok
-test_exfiltration_engine_detection (test_engines.TestThreatDetectionEngines.test_exfiltration_engine_detection) ... ok
-test_malware_engine_detection (test_engines.TestThreatDetectionEngines.test_malware_engine_detection) ... ok
-test_recon_engine_detection (test_engines.TestThreatDetectionEngines.test_recon_engine_detection) ... ok
-test_10s_volumetric_and_fanout_metrics (test_features.TestSlidingWindowStore.test_10s_volumetric_and_fanout_metrics) ... ok
-test_300s_c2_and_exfiltration_metrics (test_features.TestSlidingWindowStore.test_300s_c2_and_exfiltration_metrics) ... ok
-test_60s_dns_and_recon_metrics (test_features.TestSlidingWindowStore.test_60s_dns_and_recon_metrics) ... ok
-test_window_retention_and_expiration (test_features.TestSlidingWindowStore.test_window_retention_and_expiration) ... ok
-test_fan_out_cardinality (test_features.TestStatisticalMetrics.test_fan_out_cardinality) ... ok
-test_flow_ratio_negative_guard (test_features.TestStatisticalMetrics.test_flow_ratio_negative_guard) ... ok
-test_flow_ratio_normal_and_asymmetric (test_features.TestStatisticalMetrics.test_flow_ratio_normal_and_asymmetric) ... ok
-test_inter_arrival_variance_edge_cases (test_features.TestStatisticalMetrics.test_inter_arrival_variance_edge_cases) ... ok
-test_inter_arrival_variance_periodic_vs_random (test_features.TestStatisticalMetrics.test_inter_arrival_variance_periodic_vs_random) ... ok
-test_shannon_entropy_diverse_strings (test_features.TestStatisticalMetrics.test_shannon_entropy_diverse_strings) ... ok
-test_shannon_entropy_empty_and_single (test_features.TestStatisticalMetrics.test_shannon_entropy_empty_and_single) ... ok
-test_shannon_entropy_ip_distribution (test_features.TestStatisticalMetrics.test_shannon_entropy_ip_distribution) ... ok
-test_benign_flow_structure (test_features.TestSyntheticFlowGenerator.test_benign_flow_structure) ... ok
-test_botnet_c2_beacon_characteristics (test_features.TestSyntheticFlowGenerator.test_botnet_c2_beacon_characteristics) ... ok
-test_data_exfiltration_characteristics (test_features.TestSyntheticFlowGenerator.test_data_exfiltration_characteristics) ... ok
-test_dga_dns_tunnel_characteristics (test_features.TestSyntheticFlowGenerator.test_dga_dns_tunnel_characteristics) ... ok
-test_encrypted_malware_characteristics (test_features.TestSyntheticFlowGenerator.test_encrypted_malware_characteristics) ... ok
-test_mock_event_producer_batch_generation (test_features.TestSyntheticFlowGenerator.test_mock_event_producer_batch_generation) ... ok
-test_recon_scan_characteristics (test_features.TestSyntheticFlowGenerator.test_recon_scan_characteristics) ... ok
-test_volumetric_ddos_characteristics (test_features.TestSyntheticFlowGenerator.test_volumetric_ddos_characteristics) ... ok
-test_batch_file_replay (test_pcap_replay.TestFileReplayExecution.test_batch_file_replay) ... ok
-test_botnet_c2_periodic_beaconing_replay_detection (test_pcap_replay.TestPCAPReplayAttacks.test_botnet_c2_periodic_beaconing_replay_detection) ... ok
-test_data_exfiltration_replay_detection (test_pcap_replay.TestPCAPReplayAttacks.test_data_exfiltration_replay_detection) ... ok
-test_ddos_syn_flood_replay_detection (test_pcap_replay.TestPCAPReplayAttacks.test_ddos_syn_flood_replay_detection) ... ok
-test_dga_dns_tunneling_replay_detection (test_pcap_replay.TestPCAPReplayAttacks.test_dga_dns_tunneling_replay_detection) ... ok
-test_encrypted_malware_tls_replay_detection (test_pcap_replay.TestPCAPReplayAttacks.test_encrypted_malware_tls_replay_detection) ... ok
-test_recon_port_sweep_replay_detection (test_pcap_replay.TestPCAPReplayAttacks.test_recon_port_sweep_replay_detection) ... ok
-test_normalize_conn_record (test_pcap_replay.TestZeekLogNormalization.test_normalize_conn_record) ... ok
-test_normalize_dns_record (test_pcap_replay.TestZeekLogNormalization.test_normalize_dns_record) ... ok
-test_normalize_ssl_record (test_pcap_replay.TestZeekLogNormalization.test_normalize_ssl_record) ... ok
-test_parse_zeek_history_flags (test_pcap_replay.TestZeekLogNormalization.test_parse_zeek_history_flags) ... ok
-test_parse_zeek_timestamp (test_pcap_replay.TestZeekLogNormalization.test_parse_zeek_timestamp) ... ok
-test_safe_int_handling (test_pcap_replay.TestZeekLogNormalization.test_safe_int_handling) ... ok
-test_shipper_queue_to_consumer_batch (test_pcap_replay.TestZeekLogShipperAndConsumer.test_shipper_queue_to_consumer_batch) ... ok
-test_uid_cross_protocol_correlation (test_pcap_replay.TestZeekLogShipperAndConsumer.test_uid_cross_protocol_correlation) ... ok
-----------------------------------------------------------------------
-Ran 50 tests in 2.80s
+============================= test session starts =============================
+platform win32 -- Python 3.11+ / 3.13+, pytest, pluggy
+rootdir: ThreatLens
+plugins: anyio
+collected 141 items
 
-OK
+backend/tests/test_alert_identity.py::TestAlertIdentity ........................ [  4%]
+backend/tests/test_api.py::TestFastAPIGateway .................................. [ 10%]
+backend/tests/test_auth_security.py ............................................ [ 15%]
+backend/tests/test_engines.py::TestThreatDetectionEngines ...................... [ 25%]
+backend/tests/test_engines.py::TestPipelineAndAggregator ....................... [ 30%]
+backend/tests/test_env_loading.py .............................................. [ 35%]
+backend/tests/test_features.py::TestStatisticalMetrics ......................... [ 45%]
+backend/tests/test_features.py::TestSlidingWindowStore ......................... [ 55%]
+backend/tests/test_features.py::TestSyntheticFlowGenerator ..................... [ 65%]
+backend/tests/test_pcap_replay.py::TestZeekLogNormalization .................... [ 75%]
+backend/tests/test_pcap_replay.py::TestPCAPReplayAttacks ....................... [ 85%]
+backend/tests/test_replay_api.py::TestReplayAPI ................................ [ 90%]
+backend/tests/test_runtime_config.py ........................................... [ 92%]
+backend/tests/test_severity.py ................................................. [ 95%]
+backend/tests/test_storage_resilience.py ....................................... [ 98%]
+backend/tests/test_suppression.py .............................................. [100%]
+
+======================= 141 passed in ~2.8s =======================
 ```
 
 ---
@@ -417,12 +405,12 @@ OK
 | **02** | Feature Store & Synthetic Stream | SlidingWindowStore (10s, 60s, 300s), Shannon entropy, IAT variance, and synthetic generator. | Complete |
 | **03** | Multi-Threat ML Detection Pipeline | 6 specialized detection engines, FFT periodicity, dynamic 3-sigma scoring, and AlertAggregator. | Complete |
 | **04** | Streaming Gateway & Persistence | ClickHouse columnar storage client, FastAPI REST API, and sub-50ms WebSocket broadcast hub. | Complete |
-| **05** | High-Density SOC Dashboard | React 18 dashboard with shadcn/ui, Hugeicons, Recharts, slide-over ForensicDrawer, and freeze toggle. | Complete |
+| **05** | Modern High-Density SOC Dashboard | React 18 dashboard with Framer Motion, real-time sliding-window ThreatTrends waveform, expanded full-width interactive ThroughputGauge, centered dark fiber LoginPage, ForensicDrawer, and PCAP replay modal. | Complete |
 | **06** | Hardware TAP & Live PCAP Replay | Containerized Zeek sensor (watch/replay/live), local.zeek JSON/JA3 policy, asynchronous ZeekLogShipper, KafkaIngestConsumer, sample PCAP generator, and 15 validation tests. | Complete |
 | **07** | Live Alert Suppression & Rule Tuning | Analyst-configurable runtime thresholds (22 parameters, 7 rules), suppression/allowlist rules with CIDR + expiry + enable/disable, Redis-mirrored persistence with honest memory-mode reporting, and the Detection Configuration dashboard panel. | Complete |
 
 > [!NOTE]
-> All seven core architecture milestones are complete, verified with 98 passing end-to-end tests and active containerized components. Runtime configuration is analyst-tunable (not adaptive ML); changes apply to new detections immediately without a restart. Future roadmap items include kernel-bypass eBPF/XDP hardware filtering and automated BGP FlowSpec mitigation triggers.
+> All seven core architecture milestones are complete, verified with 141 passing end-to-end tests and active containerized components. Runtime configuration is analyst-tunable (not adaptive ML); changes apply to new detections immediately without a restart. Future roadmap items include kernel-bypass eBPF/XDP hardware filtering and automated BGP FlowSpec mitigation triggers.
 
 ---
 
