@@ -21,7 +21,7 @@ type ThroughputPoint = TrafficWindow;
 type MetricKey = "flows" | "pps" | "mbps";
 
 const MAX_HISTORY_POINTS = 43_200;
-const MAX_RENDER_POINTS = 120;
+const MAX_RENDER_POINTS = 140;
 
 function formatWindowLabel(timestamp: number, windowMinutes: number) {
   const date = new Date(timestamp);
@@ -38,24 +38,41 @@ function downsample(points: ThroughputPoint[]) {
 
 const metricConfig: Record<
   MetricKey,
-  { label: string; unit: string; color: string; gradientId: string }
+  {
+    title: string;
+    unit: string;
+    subtext: string;
+    color: string;
+    borderColor: string;
+    bgActive: string;
+    gradientId: string;
+  }
 > = {
   flows: {
-    label: "Flows",
+    title: "Flows Ingress",
     unit: "flows/s",
+    subtext: "Live TCP/UDP connection 5-tuples",
     color: "#10b981", // Emerald 500
+    borderColor: "border-emerald-500/50",
+    bgActive: "bg-emerald-500/[0.08]",
     gradientId: "flowGradient",
   },
   pps: {
-    label: "Packets",
+    title: "Packet Velocity",
     unit: "pps",
+    subtext: "Promiscuous line-rate packet flow",
     color: "#38bdf8", // Sky 400
+    borderColor: "border-sky-500/50",
+    bgActive: "bg-sky-500/[0.08]",
     gradientId: "ppsGradient",
   },
   mbps: {
-    label: "Bandwidth",
+    title: "Wire Bandwidth",
     unit: "Mbps",
+    subtext: "Payload bitstream across physical TAP",
     color: "#a855f7", // Purple 400
+    borderColor: "border-purple-500/50",
+    bgActive: "bg-purple-500/[0.08]",
     gradientId: "mbpsGradient",
   },
 };
@@ -73,7 +90,7 @@ function ThroughputTooltip({
   const point = payload[0].payload;
 
   return (
-    <div className="rounded border border-[var(--hairline)] bg-[var(--bg-surface)] px-2.5 py-2 shadow-xl font-mono text-[10px] text-[var(--text-primary)] min-w-[170px] z-50">
+    <div className="rounded border border-[var(--hairline)] bg-[var(--bg-surface)] px-3 py-2 shadow-xl font-mono text-[10px] text-[var(--text-primary)] min-w-[190px] z-50">
       <div className="mb-1.5 text-[var(--text-secondary)] font-semibold border-b border-[var(--hairline)] pb-1 flex items-center justify-between">
         <span>UTC {label}</span>
         <span className="text-[9px] text-emerald-400 font-semibold">TAP PROMISCUOUS</span>
@@ -217,47 +234,37 @@ export function ThroughputGauge({ onWindowSelect }: ThroughputGaugeProps) {
 
   // Dynamic Y-axis scale based on currently selected metric
   const maxMetricValue = visibleData.reduce((acc, curr) => Math.max(acc, curr[activeMetric] || 0), 0);
-  const niceYMax = Math.max(Math.ceil(maxMetricValue * 1.25), activeMetric === "flows" ? 6 : activeMetric === "mbps" ? 5 : 500);
+  const niceYMax = Math.max(
+    Math.ceil(maxMetricValue * 1.25),
+    activeMetric === "flows" ? 6 : activeMetric === "mbps" ? 5 : 500
+  );
 
   return (
-    <div className="w-full flex flex-col gap-3 h-full">
-      {/* Header Row: Title, Metric Toggle, Window Selector */}
-      <div className="flex items-center justify-between border-b border-[var(--hairline)] pb-2.5">
-        <div className="flex items-center gap-2.5">
+    <div className="w-full flex flex-col gap-3.5">
+      {/* Top Header: Title, Architectural Security Status, and Time Window */}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--hairline)] pb-3">
+        <div className="flex flex-wrap items-center gap-2.5">
           <h2 className="text-[length:var(--text-label)] text-[var(--text-secondary)] uppercase tracking-widest opacity-80 h-[16px] flex items-center">
-            Throughput
+            Throughput Telemetry
           </h2>
-          <span className="flex items-center gap-1.5 text-[9px] font-mono text-emerald-400 font-semibold px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20">
+          <span className="flex items-center gap-1.5 text-[9px] font-mono text-emerald-400 font-semibold px-2 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-            LIVE
+            LIVE TAP STREAM
+          </span>
+          <span className="hidden sm:inline-flex items-center gap-1 text-[9px] font-mono text-zinc-400 px-2 py-0.5 rounded bg-zinc-900/60 border border-[var(--hairline)]">
+            INGEST: <strong className="text-emerald-400 font-normal">ZERO-EGRESS READ-ONLY</strong>
+          </span>
+          <span className="hidden md:inline-flex items-center gap-1 text-[9px] font-mono text-zinc-400 px-2 py-0.5 rounded bg-zinc-900/60 border border-[var(--hairline)]">
+            RETURN PATH: <strong className="text-zinc-300 font-normal">NONE (PHYSICAL DIODE)</strong>
           </span>
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Explanatory Metric Switcher */}
-          <div className="flex items-center rounded bg-[var(--bg-base)] border border-[var(--hairline)] p-0.5 text-[10px] font-mono">
-            {(["flows", "pps", "mbps"] as MetricKey[]).map((metric) => (
-              <button
-                key={metric}
-                type="button"
-                onClick={() => setActiveMetric(metric)}
-                className={`px-2 py-0.5 rounded transition-all ${
-                  activeMetric === metric
-                    ? "bg-[var(--bg-surface-hover)] text-[var(--text-primary)] font-bold shadow-sm"
-                    : "text-[var(--text-secondary)] hover:text-zinc-200"
-                }`}
-              >
-                {metricConfig[metric].label}
-              </button>
-            ))}
-          </div>
-
-          {/* Time Window Dropdown */}
           <select
             value={windowMinutes}
             onChange={(event) => setWindowMinutes(Number(event.target.value))}
             aria-label="Throughput chart interval"
-            className="h-6 rounded bg-[var(--bg-surface-hover)] border border-[var(--hairline)] px-2 text-[10px] text-[var(--text-secondary)] font-mono outline-none focus:border-emerald-500/50 cursor-pointer"
+            className="h-6 rounded bg-[var(--bg-surface-hover)] border border-[var(--hairline)] px-2.5 text-[10px] text-[var(--text-secondary)] font-mono outline-none focus:border-emerald-500/50 cursor-pointer"
           >
             <option value={1}>LIVE 1M</option>
             <option value={5}>LAST 5M</option>
@@ -268,48 +275,111 @@ export function ThroughputGauge({ onWindowSelect }: ThroughputGaugeProps) {
         </div>
       </div>
 
-      {/* Explanatory Metric Counter Row */}
-      <div className="grid grid-cols-3 gap-2 py-1 border-b border-[var(--hairline)]/50">
-        <div>
-          <div className="text-[10px] font-mono uppercase tracking-wider text-[var(--text-secondary)] flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-            Flows Ingress
+      {/* Interactive Metric Cards: Clicking any card switches the active stream graph */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        {/* Card 1: Flows Ingress */}
+        <button
+          type="button"
+          onClick={() => setActiveMetric("flows")}
+          className={`text-left p-3.5 rounded border transition-all cursor-pointer relative overflow-hidden ${
+            activeMetric === "flows"
+              ? "border-emerald-500/50 bg-emerald-500/[0.07] shadow-sm ring-1 ring-emerald-500/30"
+              : "border-[var(--hairline)] bg-[var(--bg-base)]/40 hover:bg-[var(--bg-surface-hover)]/40 hover:border-zinc-700"
+          }`}
+        >
+          <div className="flex items-center justify-between text-[10px] font-mono uppercase tracking-wider mb-1.5">
+            <span className="flex items-center gap-1.5 text-zinc-300 font-semibold">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+              Flows Ingress
+            </span>
+            {activeMetric === "flows" ? (
+              <span className="text-[9px] px-1.5 py-0.2 rounded font-semibold text-emerald-300 bg-emerald-500/15 border border-emerald-500/30">
+                ACTIVE GRAPH ▾
+              </span>
+            ) : (
+              <span className="text-[9px] text-zinc-500 group-hover:text-zinc-300">Switch ↗</span>
+            )}
           </div>
-          <div className="text-base font-bold tabular-nums text-[var(--text-primary)] flex items-baseline gap-1 mt-0.5">
+          <div className="text-2xl font-bold tabular-nums text-[var(--text-primary)] flex items-baseline gap-1.5">
             {currentFlows.toFixed(2)}
-            <span className="text-[10px] font-normal text-zinc-500">f/s</span>
+            <span className="text-xs font-mono font-normal text-zinc-400">flows/s</span>
           </div>
-        </div>
+          <p className="text-[10px] font-mono text-[var(--text-secondary)] mt-1 truncate">
+            Live TCP/UDP connection 5-tuples
+          </p>
+        </button>
 
-        <div>
-          <div className="text-[10px] font-mono uppercase tracking-wider text-[var(--text-secondary)] flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-sky-400" />
-            Packet Velocity
+        {/* Card 2: Packet Velocity */}
+        <button
+          type="button"
+          onClick={() => setActiveMetric("pps")}
+          className={`text-left p-3.5 rounded border transition-all cursor-pointer relative overflow-hidden ${
+            activeMetric === "pps"
+              ? "border-sky-500/50 bg-sky-500/[0.07] shadow-sm ring-1 ring-sky-500/30"
+              : "border-[var(--hairline)] bg-[var(--bg-base)]/40 hover:bg-[var(--bg-surface-hover)]/40 hover:border-zinc-700"
+          }`}
+        >
+          <div className="flex items-center justify-between text-[10px] font-mono uppercase tracking-wider mb-1.5">
+            <span className="flex items-center gap-1.5 text-zinc-300 font-semibold">
+              <span className="w-1.5 h-1.5 rounded-full bg-sky-400" />
+              Packet Velocity
+            </span>
+            {activeMetric === "pps" ? (
+              <span className="text-[9px] px-1.5 py-0.2 rounded font-semibold text-sky-300 bg-sky-500/15 border border-sky-500/30">
+                ACTIVE GRAPH ▾
+              </span>
+            ) : (
+              <span className="text-[9px] text-zinc-500 group-hover:text-zinc-300">Switch ↗</span>
+            )}
           </div>
-          <div className="text-base font-bold tabular-nums text-[var(--text-primary)] flex items-baseline gap-1 mt-0.5">
+          <div className="text-2xl font-bold tabular-nums text-[var(--text-primary)] flex items-baseline gap-1.5">
             {Math.round(currentPPS).toLocaleString()}
-            <span className="text-[10px] font-normal text-zinc-500">pps</span>
+            <span className="text-xs font-mono font-normal text-zinc-400">pps</span>
           </div>
-        </div>
+          <p className="text-[10px] font-mono text-[var(--text-secondary)] mt-1 truncate">
+            Promiscuous line-rate frame rate
+          </p>
+        </button>
 
-        <div>
-          <div className="text-[10px] font-mono uppercase tracking-wider text-[var(--text-secondary)] flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-purple-400" />
-            Wire Bandwidth
+        {/* Card 3: Wire Bandwidth */}
+        <button
+          type="button"
+          onClick={() => setActiveMetric("mbps")}
+          className={`text-left p-3.5 rounded border transition-all cursor-pointer relative overflow-hidden ${
+            activeMetric === "mbps"
+              ? "border-purple-500/50 bg-purple-500/[0.07] shadow-sm ring-1 ring-purple-500/30"
+              : "border-[var(--hairline)] bg-[var(--bg-base)]/40 hover:bg-[var(--bg-surface-hover)]/40 hover:border-zinc-700"
+          }`}
+        >
+          <div className="flex items-center justify-between text-[10px] font-mono uppercase tracking-wider mb-1.5">
+            <span className="flex items-center gap-1.5 text-zinc-300 font-semibold">
+              <span className="w-1.5 h-1.5 rounded-full bg-purple-400" />
+              Wire Bandwidth
+            </span>
+            {activeMetric === "mbps" ? (
+              <span className="text-[9px] px-1.5 py-0.2 rounded font-semibold text-purple-300 bg-purple-500/15 border border-purple-500/30">
+                ACTIVE GRAPH ▾
+              </span>
+            ) : (
+              <span className="text-[9px] text-zinc-500 group-hover:text-zinc-300">Switch ↗</span>
+            )}
           </div>
-          <div className="text-base font-bold tabular-nums text-[var(--text-primary)] flex items-baseline gap-1 mt-0.5">
+          <div className="text-2xl font-bold tabular-nums text-[var(--text-primary)] flex items-baseline gap-1.5">
             {currentMbps.toFixed(2)}
-            <span className="text-[10px] font-normal text-zinc-500">Mbps (peak {peakMbps})</span>
+            <span className="text-xs font-mono font-normal text-zinc-400">Mbps</span>
           </div>
-        </div>
+          <p className="text-[10px] font-mono text-[var(--text-secondary)] mt-1 truncate">
+            Bitstream velocity (Peak: {peakMbps.toFixed(2)} Mbps)
+          </p>
+        </button>
       </div>
 
-      {/* Explanatory Stream Area Chart */}
-      <div className="w-full flex-1 min-h-[75px]">
+      {/* Expanded Full-Width Streaming Waveform Area Chart */}
+      <div className="w-full h-[130px] mt-1">
         <ResponsiveContainer width="100%" height="100%">
           <AreaChart
             data={visibleData}
-            margin={{ top: 8, right: 10, left: -25, bottom: 0 }}
+            margin={{ top: 8, right: 10, left: -20, bottom: 0 }}
             onClick={(state) => {
               const point = state?.activePayload?.[0]?.payload as ThroughputPoint | undefined;
               if (point && onWindowSelect) onWindowSelect(point);
@@ -317,15 +387,15 @@ export function ThroughputGauge({ onWindowSelect }: ThroughputGaugeProps) {
           >
             <defs>
               <linearGradient id="flowGradient" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#10b981" stopOpacity={0.3} />
+                <stop offset="0%" stopColor="#10b981" stopOpacity={0.28} />
                 <stop offset="100%" stopColor="#10b981" stopOpacity={0.0} />
               </linearGradient>
               <linearGradient id="ppsGradient" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#38bdf8" stopOpacity={0.3} />
+                <stop offset="0%" stopColor="#38bdf8" stopOpacity={0.28} />
                 <stop offset="100%" stopColor="#38bdf8" stopOpacity={0.0} />
               </linearGradient>
               <linearGradient id="mbpsGradient" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="#a855f7" stopOpacity={0.3} />
+                <stop offset="0%" stopColor="#a855f7" stopOpacity={0.28} />
                 <stop offset="100%" stopColor="#a855f7" stopOpacity={0.0} />
               </linearGradient>
             </defs>
@@ -338,10 +408,10 @@ export function ThroughputGauge({ onWindowSelect }: ThroughputGaugeProps) {
               fontSize={10}
               tickLine={false}
               axisLine={false}
-              minTickGap={40}
+              minTickGap={45}
             />
             <YAxis
-              allowDecimals={activeMetric === "mbps"}
+              allowDecimals={activeMetric === "mbps" || activeMetric === "flows"}
               stroke="var(--text-muted)"
               fontSize={10}
               tickLine={false}
@@ -373,7 +443,7 @@ export function ThroughputGauge({ onWindowSelect }: ThroughputGaugeProps) {
                   </g>
                 );
               }}
-              activeDot={{ r: 3, fill: activeConfig.color }}
+              activeDot={{ r: 3.5, fill: activeConfig.color }}
               isAnimationActive={false}
             />
           </AreaChart>

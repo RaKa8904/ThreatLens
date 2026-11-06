@@ -1,7 +1,6 @@
 import { type CSSProperties, type KeyboardEvent, useEffect, useState } from "react";
 import { Navbar } from "@/components/Navbar";
 import { ThroughputGauge, TrafficWindow } from "@/components/ThroughputGauge";
-import { SystemHealthPanel } from "@/components/SystemHealthPanel";
 import { IncidentsPanel } from "@/components/IncidentsPanel";
 import { ThreatTrends } from "@/components/ThreatTrends";
 import { ThreatTable } from "@/components/ThreatTable";
@@ -322,15 +321,10 @@ export function App() {
             </div>
           </motion.div>
 
-          <motion.div variants={bootVariants} className="border border-[var(--hairline)] rounded-md flex flex-col xl:grid xl:grid-cols-[5fr_7fr]">
-            <div className="min-w-0 p-5 border-b xl:border-b-0 xl:border-r border-[var(--hairline)]">
-              <ThroughputGauge
-                onWindowSelect={handleTrafficWindowSelect}
-              />
-            </div>
-            <div className="min-w-0 p-5">
-              <SystemHealthPanel />
-            </div>
+          <motion.div variants={bootVariants} className="border border-[var(--hairline)] rounded-md p-5 bg-[var(--bg-surface)]">
+            <ThroughputGauge
+              onWindowSelect={handleTrafficWindowSelect}
+            />
           </motion.div>
 
           <motion.div variants={bootVariants} className="flex flex-col xl:grid xl:grid-cols-[7fr_5fr] gap-4 xl:h-[220px]">
