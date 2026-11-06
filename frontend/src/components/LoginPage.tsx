@@ -2,6 +2,7 @@ import { useState, useEffect, type FormEvent, type KeyboardEvent } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { useMotionEnabled, motionTokens } from "@/lib/motion";
 import { Button } from "@/components/ui/button";
+import { HERO_IMAGE_DATA_URI } from "@/assets/heroImage";
 import {
   Shield01Icon as ShieldSecurity,
   LockKeyIcon as LockKey,
@@ -40,109 +41,6 @@ const mockLogTemplates = [
   "[eth1] OUT 192.168.1.102:443 -> 1.1.1.1:53 UDP",
   "[core] MEM_ALLOC 0x0A9922 (t=8ms)",
 ];
-
-function CyberTopologyHero({ motionEnabled }: { motionEnabled: boolean }) {
-  return (
-    <div className="absolute inset-0 pointer-events-none overflow-hidden bg-[#07090e]">
-      {/* Ambient background glows */}
-      <div className="absolute top-1/4 left-1/4 w-96 h-96 rounded-full bg-emerald-500/[0.07] blur-3xl pointer-events-none" />
-      <div className="absolute bottom-1/3 right-1/4 w-80 h-80 rounded-full bg-sky-500/[0.05] blur-3xl pointer-events-none" />
-
-      {/* SVG Canvas */}
-      <svg className="w-full h-full opacity-70" xmlns="http://www.w3.org/2000/svg">
-        <defs>
-          <pattern id="soc-grid" width="40" height="40" patternUnits="userSpaceOnUse">
-            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="rgba(255, 255, 255, 0.04)" strokeWidth="1" />
-            <circle cx="40" cy="40" r="1" fill="rgba(16, 185, 129, 0.15)" />
-          </pattern>
-          <linearGradient id="streamGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stopColor="#10b981" stopOpacity="0.8" />
-            <stop offset="50%" stopColor="#38bdf8" stopOpacity="0.6" />
-            <stop offset="100%" stopColor="#6366f1" stopOpacity="0.2" />
-          </linearGradient>
-          <radialGradient id="radarGlow" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor="rgba(16, 185, 129, 0.15)" />
-            <stop offset="100%" stopColor="rgba(16, 185, 129, 0)" />
-          </radialGradient>
-        </defs>
-
-        <rect width="100%" height="100%" fill="url(#soc-grid)" />
-
-        {/* Concentric Radar Rings */}
-        <g transform="translate(320, 260)">
-          <circle r="180" fill="none" stroke="rgba(16, 185, 129, 0.12)" strokeWidth="1" strokeDasharray="4 4" />
-          <circle r="130" fill="url(#radarGlow)" stroke="rgba(16, 185, 129, 0.2)" strokeWidth="1" />
-          <circle r="75" fill="none" stroke="rgba(56, 189, 248, 0.25)" strokeWidth="1" />
-          <circle r="25" fill="none" stroke="rgba(16, 185, 129, 0.4)" strokeWidth="1.5" />
-          <line x1="-190" y1="0" x2="190" y2="0" stroke="rgba(255, 255, 255, 0.08)" strokeWidth="1" />
-          <line x1="0" y1="-190" x2="0" y2="190" stroke="rgba(255, 255, 255, 0.08)" strokeWidth="1" />
-        </g>
-
-        {/* Network Pipeline Paths */}
-        <g fill="none" strokeWidth="1.5">
-          <path d="M 80 180 C 180 180, 220 260, 320 260" stroke="url(#streamGrad)" strokeDasharray="6 4" />
-          <path d="M 320 260 C 400 260, 460 160, 560 160" stroke="rgba(56, 189, 248, 0.4)" strokeDasharray="4 4" />
-          <path d="M 320 260 C 390 320, 480 380, 580 380" stroke="rgba(16, 185, 129, 0.4)" strokeDasharray="4 4" />
-          <path d="M 120 360 C 200 360, 250 290, 320 260" stroke="rgba(244, 63, 94, 0.3)" strokeDasharray="5 5" />
-        </g>
-
-        {/* Pipeline Nodes */}
-        <g className="font-mono text-[9px] fill-zinc-400 select-none">
-          {/* Node 1: TAP */}
-          <g transform="translate(80, 180)">
-            <circle r="6" fill="#09090b" stroke="#10b981" strokeWidth="2" />
-            <circle r="2.5" fill="#10b981" />
-            <text x="12" y="3" fill="#34d399" fontWeight="bold">TAP MIRROR</text>
-            <text x="12" y="14" fill="#71717a">eth0: promiscuous</text>
-          </g>
-
-          {/* Node 2: Ingress Hub */}
-          <g transform="translate(120, 360)">
-            <circle r="5" fill="#09090b" stroke="#f43f5e" strokeWidth="1.5" />
-            <circle r="2" fill="#f43f5e" />
-            <text x="12" y="3" fill="#fb7185">PCAP REPLAY DROP</text>
-            <text x="12" y="14" fill="#71717a">/pcaps/live.pcap</text>
-          </g>
-
-          {/* Node 3: Core Sensor Engine */}
-          <g transform="translate(320, 260)">
-            <circle r="8" fill="#09090b" stroke="#38bdf8" strokeWidth="2" />
-            <circle r="4" fill="#38bdf8" />
-            <text x="-50" y="-16" fill="#38bdf8" fontWeight="bold" textAnchor="middle">ZEEK SENSOR CORE</text>
-            <text x="-50" y="-5" fill="#71717a" textAnchor="middle">JA3 / TLS / Flow Extraction</text>
-          </g>
-
-          {/* Node 4: Stream Bus */}
-          <g transform="translate(560, 160)">
-            <circle r="6" fill="#09090b" stroke="#a78bfa" strokeWidth="2" />
-            <circle r="2.5" fill="#a78bfa" />
-            <text x="12" y="3" fill="#c084fc" fontWeight="bold">REDPANDA STREAM</text>
-            <text x="12" y="14" fill="#71717a">traffic-flows: 9092</text>
-          </g>
-
-          {/* Node 5: Threat Classifier */}
-          <g transform="translate(580, 380)">
-            <circle r="6" fill="#09090b" stroke="#10b981" strokeWidth="2" />
-            <circle r="2.5" fill="#10b981" />
-            <text x="12" y="3" fill="#34d399" fontWeight="bold">ML ANOMALY ENGINES</text>
-            <text x="12" y="14" fill="#71717a">6-Vector Detection Bus</text>
-          </g>
-        </g>
-      </svg>
-
-      {/* Radar sweeping line */}
-      {motionEnabled && (
-        <motion.div
-          animate={{ rotate: 360 }}
-          transition={{ duration: 16, repeat: Infinity, ease: "linear" }}
-          className="absolute w-[360px] h-[360px] top-[80px] left-[140px] pointer-events-none origin-center"
-        >
-          <div className="w-1/2 h-1/2 bg-gradient-to-br from-emerald-500/15 via-emerald-500/5 to-transparent rounded-tl-full" />
-        </motion.div>
-      )}
-    </div>
-  );
-}
 
 export function LoginPage({ onLoginSuccess }: LoginPageProps) {
   const [username, setUsername] = useState("");
@@ -304,15 +202,36 @@ export function LoginPage({ onLoginSuccess }: LoginPageProps) {
       transition={{ duration: motionEnabled ? 0.15 : 0.05 }}
       className="min-h-[100dvh] w-full bg-[var(--bg-base)] text-[var(--text-primary)] flex font-sans selection:bg-emerald-500/20 selection:text-emerald-300 relative overflow-hidden select-none"
     >
-        {/* Left side: Brand / Image */}
+        {/* Left side: Brand & Centered Fiber Neural Background */}
         <div className="hidden lg:flex flex-1 relative flex-col justify-between p-12 border-r border-[var(--hairline)] overflow-hidden" aria-hidden="true">
-          <CyberTopologyHero motionEnabled={motionEnabled} />
+          {/* Centered Organic Fiber Network Visual */}
+          <div className="absolute inset-0 overflow-hidden pointer-events-none select-none bg-[#05070c]">
+            <motion.div
+              initial={{ opacity: 0, scale: 1 }}
+              animate={{ opacity: 1, scale: motionEnabled ? 1.03 : 1 }}
+              transition={{
+                opacity: { duration: motionEnabled ? 0.7 : 0.1 },
+                scale: { duration: 24, ease: "easeInOut", repeat: Infinity, repeatType: "reverse" },
+              }}
+              className="absolute inset-0 flex items-center justify-center"
+            >
+              <img
+                src={HERO_IMAGE_DATA_URI}
+                alt=""
+                className="w-full h-full object-cover object-center pointer-events-none select-none opacity-65"
+              />
+            </motion.div>
 
-          {/* Left-to-right fade to #09090b at the form edge */}
-          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-[#09090b]/30 to-[#09090b]" />
-          {/* Bottom-to-top darkening gradient for text readability */}
-          <div className="absolute inset-0 bg-gradient-to-t from-[#09090b] via-[#09090b]/60 to-transparent" />
+            {/* Subtle radial ambient vignette centered on screen */}
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_35%,#09090b_95%)] pointer-events-none" />
 
+            {/* Left-to-right fade into #09090b at the form edge */}
+            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-[#09090b]/40 to-[#09090b]" />
+            {/* Bottom-to-top darkening gradient for text readability */}
+            <div className="absolute inset-0 bg-gradient-to-t from-[#09090b] via-[#09090b]/70 to-transparent" />
+          </div>
+
+          {/* Top Brand Header */}
           <div className="flex items-center space-x-3 z-10">
             <div className="flex items-center justify-center h-10 w-10 rounded border border-[var(--hairline)] text-[var(--text-primary)] shadow-sm bg-[var(--bg-surface)]">
               <ShieldSecurity className="h-5 w-5 text-emerald-400" />
@@ -330,6 +249,32 @@ export function LoginPage({ onLoginSuccess }: LoginPageProps) {
               <p className="text-[11px] text-[var(--text-secondary)] font-mono mt-0.5 tracking-widest">
                 ZERO-TRANSMIT PASSIVE NETWORK FORENSICS
               </p>
+            </div>
+          </div>
+
+          {/* Center Technical Specifications Enclave Badges */}
+          <div className="z-10 my-auto max-w-md">
+            <div className="grid grid-cols-2 gap-2.5 font-mono text-[10px]">
+              <div className="p-3 rounded border border-[var(--hairline)] bg-[var(--bg-surface)]/80 backdrop-blur-md">
+                <div className="text-[var(--text-secondary)] text-[9px] uppercase tracking-wider mb-1">Architecture</div>
+                <div className="font-semibold text-[var(--text-primary)]">Passive Optical TAP</div>
+                <div className="text-emerald-400 text-[9px] mt-0.5">TX Physically Disabled</div>
+              </div>
+              <div className="p-3 rounded border border-[var(--hairline)] bg-[var(--bg-surface)]/80 backdrop-blur-md">
+                <div className="text-[var(--text-secondary)] text-[9px] uppercase tracking-wider mb-1">Sensor Ingestion</div>
+                <div className="font-semibold text-[var(--text-primary)]">Zeek 6.0 Core</div>
+                <div className="text-sky-400 text-[9px] mt-0.5">Line-Rate JSON Pipeline</div>
+              </div>
+              <div className="p-3 rounded border border-[var(--hairline)] bg-[var(--bg-surface)]/80 backdrop-blur-md">
+                <div className="text-[var(--text-secondary)] text-[9px] uppercase tracking-wider mb-1">Cryptanalysis</div>
+                <div className="font-semibold text-[var(--text-primary)]">TLS JA3 / JA4</div>
+                <div className="text-purple-400 text-[9px] mt-0.5">Zero-Decryption Profiling</div>
+              </div>
+              <div className="p-3 rounded border border-[var(--hairline)] bg-[var(--bg-surface)]/80 backdrop-blur-md">
+                <div className="text-[var(--text-secondary)] text-[9px] uppercase tracking-wider mb-1">Defense Matrix</div>
+                <div className="font-semibold text-[var(--text-primary)]">6 Threat Vectors</div>
+                <div className="text-emerald-400 text-[9px] mt-0.5">Sliding-Window Scoring</div>
+              </div>
             </div>
           </div>
 
